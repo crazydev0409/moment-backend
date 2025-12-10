@@ -127,24 +127,6 @@ export class UserService {
    * Check if a user can view another user's moments
    * Users can view each other's moments if they are contacts
    */
-  async canViewCalendar(viewerId: string, ownerId: string): Promise<boolean> {
-    // Owner can always view their own moments
-    if (viewerId === ownerId) {
-      return true;
-    }
-
-    // Check if users are contacts (bidirectional)
-    const contact = await prisma.contact.findFirst({
-      where: {
-        OR: [
-          { ownerId: viewerId, contactUserId: ownerId },
-          { ownerId: ownerId, contactUserId: viewerId }
-        ]
-      }
-    });
-
-    return !!contact;
-  }
 
   /**
    * Create a moment request to book a time on someone's calendar
@@ -167,11 +149,6 @@ export class UserService {
       throw new Error('One or both users do not exist');
     }
 
-    // Check if the sender can view the receiver's calendar
-    const canView = await this.canViewCalendar(senderId, receiverId);
-    if (!canView) {
-      throw new Error("You do not have permission to view this user's calendar");
-    }
 
     const request = await prisma.momentRequest.create({
       data: {
@@ -556,7 +533,7 @@ export class UserService {
         const { eventPublisher } = getEventSystem();
         const otherUserId = userId === request.senderId ? request.receiverId : request.senderId;
         const cancelingUser = await prisma.user.findUnique({ where: { id: userId } });
-        
+
         await eventPublisher.publishMomentCanceled(
           requestId,
           otherUserId,
@@ -742,7 +719,7 @@ export class UserService {
         // Remove all non-numeric characters (spaces, dashes, parentheses, etc.)
         // This keeps only digits
         const digitsOnly = normalizedPhone.replace(/\D/g, '');
-        
+
         // Always prefix with + for E.164 format
         normalizedPhone = `+${digitsOnly}`;
 

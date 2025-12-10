@@ -116,8 +116,8 @@ export const updateMoment: CustomRequestHandler = async (req, res) => {
     });
 
     if (!momentCheck) {
-      return res.status(404).json({ 
-        error: 'Moment not found or you do not have permission to update it' 
+      return res.status(404).json({
+        error: 'Moment not found or you do not have permission to update it'
       });
     }
 
@@ -130,7 +130,7 @@ export const updateMoment: CustomRequestHandler = async (req, res) => {
 
     if (startTime) {
       const parsedStartTime = new Date(startTime);
-      
+
       // Check end time constraint
       if (endTime) {
         const parsedEndTime = new Date(endTime);
@@ -140,19 +140,19 @@ export const updateMoment: CustomRequestHandler = async (req, res) => {
       } else if (parsedStartTime >= moment.endTime) {
         return res.status(400).json({ error: 'startTime must be before endTime' });
       }
-      
+
       updates.push(`"startTime" = $${paramCount++}`);
       values.push(parsedStartTime);
     }
 
     if (endTime) {
       const parsedEndTime = new Date(endTime);
-      
+
       // Check start time constraint
       if (!startTime && moment.startTime >= parsedEndTime) {
         return res.status(400).json({ error: 'startTime must be before endTime' });
       }
-      
+
       updates.push(`"endTime" = $${paramCount++}`);
       values.push(parsedEndTime);
     }
@@ -226,8 +226,8 @@ export const deleteMoment: CustomRequestHandler = async (req, res) => {
     });
 
     if (!momentCheck) {
-      return res.status(404).json({ 
-        error: 'Moment not found or you do not have permission to delete it' 
+      return res.status(404).json({
+        error: 'Moment not found or you do not have permission to delete it'
       });
     }
 
@@ -278,16 +278,8 @@ export const getUserCalendar: CustomRequestHandler = async (req, res) => {
     });
 
     if (blockCheck) {
-      return res.status(403).json({ 
-        error: "You do not have permission to view this user's moments" 
-      });
-    }
-
-    // Check if users are contacts (for visibility)
-    const canView = await userService.canViewCalendar(viewerId, userId);
-    if (!canView) {
-      return res.status(403).json({ 
-        error: "You do not have permission to view this user's moments" 
+      return res.status(403).json({
+        error: "You do not have permission to view this user's moments"
       });
     }
 
@@ -299,28 +291,28 @@ export const getUserCalendar: CustomRequestHandler = async (req, res) => {
 
     // Process moments - show full details if visibleTo includes viewer, otherwise show only timing
     const processedMoments = moments.map(moment => {
-        const isVisibleToViewer = moment.visibleTo && Array.isArray(moment.visibleTo) && 
-                                  moment.visibleTo.includes(viewerId);
-        
+      const isVisibleToViewer = moment.visibleTo && Array.isArray(moment.visibleTo) &&
+        moment.visibleTo.includes(viewerId);
+
       if (isVisibleToViewer || moment.availability === 'public') {
-          return moment;
-        } else {
+        return moment;
+      } else {
         // Show only timing for private moments not explicitly shared
-          return {
-            id: moment.id,
-            startTime: moment.startTime,
-            endTime: moment.endTime,
-            allDay: moment.allDay,
+        return {
+          id: moment.id,
+          startTime: moment.startTime,
+          endTime: moment.endTime,
+          allDay: moment.allDay,
           availability: 'public',
           notes: null,
           icon: null,
-            visibleTo: [],
-            createdAt: moment.createdAt,
-            updatedAt: moment.updatedAt,
+          visibleTo: [],
+          createdAt: moment.createdAt,
+          updatedAt: moment.updatedAt,
           _isBusyTime: true
-          };
-        }
-      });
+        };
+      }
+    });
 
     return res.json({
       userId: user.id,
@@ -360,8 +352,8 @@ export const shareMoment: CustomRequestHandler = async (req, res) => {
     });
 
     if (!momentCheck) {
-      return res.status(404).json({ 
-        error: 'Moment not found or you do not have permission to share it' 
+      return res.status(404).json({
+        error: 'Moment not found or you do not have permission to share it'
       });
     }
 
