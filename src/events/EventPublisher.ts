@@ -32,6 +32,61 @@ export class EventPublisher {
     await this.eventBus.publish(event);
   }
 
+  async publishMomentUpdated(momentId: string | number, userId: string, momentData: any, otherUserId?: string, momentRequestId?: string): Promise<void> {
+    const event: BaseEvent = {
+      id: uuidv4(),
+      type: EventType.MOMENT_UPDATED,
+      aggregateId: String(momentId),
+      aggregateType: AggregateType.MOMENT,
+      version: 1,
+      timestamp: new Date(),
+      payload: {
+        momentId,
+        userId,
+        otherUserId, // The other user involved in the meeting (if from moment request)
+        momentRequestId, // Include moment request ID for navigation
+        title: momentData.notes || momentData.title || 'Meeting',
+        startTime: momentData.startTime,
+        endTime: momentData.endTime,
+        availability: momentData.availability
+      },
+      metadata: {
+        source: 'moment-service',
+        userId: otherUserId || userId, // Notify the other user if exists
+        priority: EventPriority.HIGH
+      }
+    };
+
+    await this.eventBus.publish(event);
+  }
+
+  async publishMomentDeleted(momentId: string | number, userId: string, momentData: any, otherUserId?: string, momentRequestId?: string): Promise<void> {
+    const event: BaseEvent = {
+      id: uuidv4(),
+      type: EventType.MOMENT_DELETED,
+      aggregateId: String(momentId),
+      aggregateType: AggregateType.MOMENT,
+      version: 1,
+      timestamp: new Date(),
+      payload: {
+        momentId,
+        userId,
+        otherUserId, // The other user involved in the meeting (if from moment request)
+        momentRequestId, // Include moment request ID for navigation
+        title: momentData.notes || momentData.title || 'Meeting',
+        startTime: momentData.startTime,
+        endTime: momentData.endTime
+      },
+      metadata: {
+        source: 'moment-service',
+        userId: otherUserId || userId, // Notify the other user if exists
+        priority: EventPriority.HIGH
+      }
+    };
+
+    await this.eventBus.publish(event);
+  }
+
   async publishMomentRequestCreated(
     requestId: string, 
     senderId: string, 
@@ -85,7 +140,9 @@ export class EventPublisher {
         receiverId,
         receiverName: requestData.receiverName,
         momentId,
-        title: requestData.title
+        title: requestData.title,
+        startTime: requestData.startTime,
+        endTime: requestData.endTime
       },
       metadata: {
         source: 'moment-request-service',
@@ -115,7 +172,9 @@ export class EventPublisher {
         senderId,
         receiverId,
         receiverName: requestData.receiverName,
-        title: requestData.title
+        title: requestData.title,
+        startTime: requestData.startTime,
+        endTime: requestData.endTime
       },
       metadata: {
         source: 'moment-request-service',
@@ -145,7 +204,9 @@ export class EventPublisher {
         notifyUserId,
         canceledByUserId,
         canceledByName: requestData.canceledByName,
-        title: requestData.title
+        title: requestData.title,
+        startTime: requestData.startTime,
+        endTime: requestData.endTime
       },
       metadata: {
         source: 'moment-request-service',

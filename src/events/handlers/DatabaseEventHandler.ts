@@ -106,6 +106,28 @@ export class DatabaseEventHandler {
           }
         };
 
+      case 'moment.updated':
+        return {
+          title: 'Meeting Updated',
+          body: `"${event.payload.title}" has been updated`,
+          data: {
+            momentId: event.payload.momentId,
+            userId: event.payload.userId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
+          }
+        };
+
+      case 'moment.deleted':
+        return {
+          title: 'Meeting Canceled',
+          body: `"${event.payload.title}" has been canceled`,
+          data: {
+            momentId: event.payload.momentId,
+            userId: event.payload.userId
+          }
+        };
+
       default:
         return null;
     }
@@ -122,6 +144,9 @@ export class DatabaseEventHandler {
         return event.payload.contactOwnerId;
       case 'moment.reminder.due':
         return event.payload.userId;
+      case 'moment.updated':
+      case 'moment.deleted':
+        return event.payload.otherUserId || event.metadata.userId || null;
       default:
         return event.metadata.userId || null;
     }

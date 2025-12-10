@@ -39,6 +39,8 @@ export async function initializeEventSystem(): Promise<{
     await eventBus.subscribe(EventType.MOMENT_REQUEST_CANCELED, expoHandler.handleEvent);
     await eventBus.subscribe(EventType.MOMENT_REMINDER_DUE, expoHandler.handleEvent);
     await eventBus.subscribe(EventType.CONTACT_REGISTERED, expoHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_UPDATED, expoHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_DELETED, expoHandler.handleEvent);
 
     // Removed DB-wide event storage; rely on broker retention (Kafka/EventHub)
     
@@ -49,6 +51,8 @@ export async function initializeEventSystem(): Promise<{
     await eventBus.subscribe(EventType.MOMENT_REQUEST_CANCELED, dbHandler.handleNotificationEvent);
     await eventBus.subscribe(EventType.MOMENT_REMINDER_DUE, dbHandler.handleNotificationEvent);
     await eventBus.subscribe(EventType.CONTACT_REGISTERED, dbHandler.handleNotificationEvent);
+    await eventBus.subscribe(EventType.MOMENT_UPDATED, dbHandler.handleNotificationEvent);
+    await eventBus.subscribe(EventType.MOMENT_DELETED, dbHandler.handleNotificationEvent);
 
     console.log('[EventSystem] Event system initialized successfully');
     

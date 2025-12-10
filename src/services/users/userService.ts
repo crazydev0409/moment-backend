@@ -372,7 +372,9 @@ export class UserService {
           receiverMoment.id,
           {
             receiverName: receiver?.name || receiver?.phoneNumber || 'User',
-            title: request.title || request.notes || 'Meeting'
+            title: request.title || request.notes || 'Meeting',
+            startTime: request.startTime,
+            endTime: request.endTime
           }
         );
       } catch (error) {
@@ -418,7 +420,9 @@ export class UserService {
           receiverId,
           {
             receiverName: receiver?.name || receiver?.phoneNumber || 'User',
-            title: request.title || request.notes || 'Meeting'
+            title: request.title || request.notes || 'Meeting',
+            startTime: request.startTime,
+            endTime: request.endTime
           }
         );
       } catch (error) {
@@ -485,6 +489,29 @@ export class UserService {
       }
     });
 
+    // Publish reschedule event to notify the original sender
+    try {
+      const { eventPublisher } = getEventSystem();
+      const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
+      await eventPublisher.publishMomentRequestCreated(
+        newRequest.id,
+        receiverId,
+        originalRequest.senderId,
+        {
+          senderName: receiver?.name || receiver?.phoneNumber || 'User',
+          title: newSchedule.note || 'Rescheduled Request',
+          startTime: newSchedule.startTime,
+          endTime: newSchedule.endTime,
+          notes: newSchedule.note,
+          isReschedule: true,
+          originalRequestId: requestId
+        }
+      );
+    } catch (error) {
+      console.error('Failed to publish reschedule event:', error);
+      // Don't fail the reschedule if event publishing fails
+    }
+
     return newRequest;
   }
 
@@ -540,7 +567,9 @@ export class UserService {
           userId,
           {
             canceledByName: cancelingUser?.name || cancelingUser?.phoneNumber || 'User',
-            title: request.title || request.notes || 'Meeting'
+            title: request.title || request.notes || 'Meeting',
+            startTime: request.startTime,
+            endTime: request.endTime
           }
         );
       } catch (error) {

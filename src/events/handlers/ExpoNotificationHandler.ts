@@ -195,7 +195,9 @@ export class ExpoNotificationHandler {
           data: {
             eventType: event.type,
             momentRequestId: event.payload.momentRequestId,
-            momentId: event.payload.momentId
+            momentId: event.payload.momentId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
           }
         };
 
@@ -205,7 +207,9 @@ export class ExpoNotificationHandler {
           body: `Your moment request was declined`,
           data: {
             eventType: event.type,
-            momentRequestId: event.payload.momentRequestId
+            momentRequestId: event.payload.momentRequestId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
           }
         };
 
@@ -215,7 +219,9 @@ export class ExpoNotificationHandler {
           body: `${event.payload.canceledByName} canceled the meeting`,
           data: {
             eventType: event.type,
-            momentRequestId: event.payload.momentRequestId
+            momentRequestId: event.payload.momentRequestId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
           }
         };
 
@@ -241,6 +247,34 @@ export class ExpoNotificationHandler {
           }
         };
 
+      case EventType.MOMENT_UPDATED:
+        return {
+          title: 'Meeting Updated',
+          body: `"${event.payload.title}" has been updated`,
+          data: {
+            eventType: event.type,
+            momentId: event.payload.momentId,
+            momentRequestId: event.payload.momentRequestId,
+            userId: event.payload.userId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
+          }
+        };
+
+      case EventType.MOMENT_DELETED:
+        return {
+          title: 'Meeting Canceled',
+          body: `"${event.payload.title}" has been canceled`,
+          data: {
+            eventType: event.type,
+            momentId: event.payload.momentId,
+            momentRequestId: event.payload.momentRequestId,
+            userId: event.payload.userId,
+            startTime: event.payload.startTime,
+            endTime: event.payload.endTime
+          }
+        };
+
       default:
         return null; // Not all events need notifications
     }
@@ -260,6 +294,9 @@ export class ExpoNotificationHandler {
         return event.payload.contactOwnerId;
       case EventType.MOMENT_REMINDER_DUE:
         return event.payload.userId;
+      case EventType.MOMENT_UPDATED:
+      case EventType.MOMENT_DELETED:
+        return event.payload.otherUserId || event.metadata.userId || null;
       default:
         return event.metadata.userId || null;
     }

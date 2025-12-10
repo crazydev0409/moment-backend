@@ -108,20 +108,18 @@ export const updateMoment: CustomRequestHandler = async (req, res) => {
     }
 
     // Check if the moment exists and belongs to the user
-    const momentCheck = await prisma.moment.findFirst({
+    const moment = await prisma.moment.findFirst({
       where: {
         id: parseInt(id),
         userId: req.user!.id
       }
     });
 
-    if (!momentCheck) {
+    if (!moment) {
       return res.status(404).json({
         error: 'Moment not found or you do not have permission to update it'
       });
     }
-
-    const moment = momentCheck;
 
     // Prepare update data with explicit typing
     const updates: string[] = [];
@@ -194,10 +192,153 @@ export const updateMoment: CustomRequestHandler = async (req, res) => {
     values.push(parseInt(id));
 
     const updatedMoment = await prisma.$queryRawUnsafe(updateQuery, ...values);
+    const updatedMomentData = (updatedMoment as any[])[0];
+
+    // Sync update to corresponding moment for the other user if this moment is from a moment request
+    let otherUserMomentId: number | null = null;
+    let otherUserId: string | null = null;
+    let momentRequest: any = null;
+
+    try {
+      // Check if this moment is linked to a moment request
+      momentRequest = await prisma.momentRequest.findFirst({
+        where: { momentId: parseInt(id) },
+        include: { sender: true, receiver: true }
+      });
+
+      if (momentRequest) {
+        // Determine the other user
+        otherUserId = momentRequest.senderId === req.user!.id 
+          ? momentRequest.receiverId 
+          : momentRequest.senderId;
+
+        // Find the corresponding moment for the other user
+        // Moments created from the same request will have matching startTime/endTime
+        const originalStartTime = moment.startTime;
+        const originalEndTime = moment.endTime;
+        const newStartTime = updatedMomentData.startTime || originalStartTime;
+        const newEndTime = updatedMomentData.endTime || originalEndTime;
+
+        // Find the other user's moment with matching original times
+        const otherUserMoment = otherUserId ? await prisma.moment.findFirst({
+          where: {
+            userId: otherUserId,
+            startTime: originalStartTime,
+            endTime: originalEndTime,
+            // Make sure it's visible to the current user (indicating it's from the same request)
+            visibleTo: {
+              has: req.user!.id
+            }
+          }
+        }) : null;
+
+        if (otherUserMoment) {
+          otherUserMomentId = otherUserMoment.id;
+
+          // Prepare updates for the other user's moment
+          const otherUpdates: string[] = [];
+          const otherValues: any[] = [];
+          let otherParamCount = 1;
+
+          // Sync startTime and endTime if they were updated
+          if (startTime) {
+            otherUpdates.push(`"startTime" = $${otherParamCount++}`);
+            otherValues.push(newStartTime);
+          }
+          if (endTime) {
+            otherUpdates.push(`"endTime" = $${otherParamCount++}`);
+            otherValues.push(newEndTime);
+          }
+          // Sync notes if updated (but keep the format with the other person's name)
+          if (notes !== undefined) {
+            // Extract the meeting title/notes part, keeping the "Moment with [person]" format
+            const otherUser = momentRequest.senderId === req.user!.id 
+              ? momentRequest.receiver 
+              : momentRequest.sender;
+            const otherPersonName = otherUser?.phoneNumber || 'a contact';
+            const meetingNotes = notes.includes(':') ? notes.split(':').slice(1).join(':').trim() : notes;
+            const formattedNotes = `Moment with ${otherPersonName}: ${meetingNotes}`;
+            otherUpdates.push(`"notes" = $${otherParamCount++}`);
+            otherValues.push(formattedNotes);
+          }
+          // Sync availability if updated
+          if (availability) {
+            otherUpdates.push(`"availability" = $${otherParamCount++}`);
+            otherValues.push(availability);
+          }
+          // Sync icon if updated
+          if (icon !== undefined) {
+            otherUpdates.push(`"icon" = $${otherParamCount++}`);
+            otherValues.push(icon);
+          }
+          // Sync allDay if updated
+          if (allDay !== undefined) {
+            otherUpdates.push(`"allDay" = $${otherParamCount++}`);
+            otherValues.push(allDay === true);
+          }
+
+          // Update the other user's moment if there are changes
+          if (otherUpdates.length > 0) {
+            otherUpdates.push(`"updatedAt" = NOW()`);
+            otherValues.push(otherUserMoment.id);
+            
+            const otherUpdateQuery = `
+              UPDATE "Moment"
+              SET ${otherUpdates.join(', ')}
+              WHERE id = $${otherParamCount}
+              RETURNING *
+            `;
+            
+            await prisma.$queryRawUnsafe(otherUpdateQuery, ...otherValues);
+            console.log(`✅ Synced moment update to other user's moment (ID: ${otherUserMoment.id})`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to sync moment update to other user:', error);
+      // Don't fail the update if sync fails
+    }
+
+    // Publish moment updated event and notify other user
+    try {
+      const { getEventSystem } = await import('../../events');
+      const { eventPublisher } = getEventSystem();
+
+      if (momentRequest && otherUserId) {
+        await eventPublisher.publishMomentUpdated(
+          id,
+          req.user!.id,
+          {
+            notes: updatedMomentData.notes,
+            title: momentRequest.title,
+            startTime: updatedMomentData.startTime,
+            endTime: updatedMomentData.endTime,
+            availability: updatedMomentData.availability
+          },
+          otherUserId,
+          momentRequest.id
+        );
+      } else {
+        // Still publish event for moments not from requests (for future use)
+        await eventPublisher.publishMomentUpdated(
+          id,
+          req.user!.id,
+          {
+            notes: updatedMomentData.notes,
+            startTime: updatedMomentData.startTime,
+            endTime: updatedMomentData.endTime,
+            availability: updatedMomentData.availability
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Failed to publish moment updated event:', error);
+      // Don't fail the update if event publishing fails
+    }
 
     return res.json({
       message: 'Moment updated successfully',
-      moment: (updatedMoment as any[])[0]
+      moment: updatedMomentData
     });
   } catch (error) {
     console.error('Error updating moment:', error);
@@ -231,11 +372,57 @@ export const deleteMoment: CustomRequestHandler = async (req, res) => {
       });
     }
 
+    // Check if this moment is linked to a moment request before deleting
+    const momentRequest = await prisma.momentRequest.findFirst({
+      where: { momentId: parseInt(id) },
+      include: { sender: true, receiver: true }
+    });
+
     // Delete moment
     await prisma.$queryRaw`
       DELETE FROM "Moment"
       WHERE id = ${parseInt(id)}
     `;
+
+    // Publish moment deleted event and notify other user if this moment is from a moment request
+    try {
+      const { getEventSystem } = await import('../../events');
+      const { eventPublisher } = getEventSystem();
+
+      if (momentRequest) {
+        // Notify the other user involved in the meeting
+        const otherUserId = momentRequest.senderId === req.user!.id 
+          ? momentRequest.receiverId 
+          : momentRequest.senderId;
+        
+        await eventPublisher.publishMomentDeleted(
+          parseInt(id),
+          req.user!.id,
+          {
+            notes: momentCheck.notes,
+            title: momentRequest.title,
+            startTime: momentCheck.startTime,
+            endTime: momentCheck.endTime
+          },
+          otherUserId,
+          momentRequest.id
+        );
+      } else {
+        // Still publish event for moments not from requests
+        await eventPublisher.publishMomentDeleted(
+          id,
+          req.user!.id,
+          {
+            notes: momentCheck.notes,
+            startTime: momentCheck.startTime,
+            endTime: momentCheck.endTime
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Failed to publish moment deleted event:', error);
+      // Don't fail the delete if event publishing fails
+    }
 
     return res.json({ message: 'Moment deleted successfully' });
   } catch (error) {
