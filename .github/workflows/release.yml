@@ -1,0 +1,91 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'The branch to release from'
+        required: true
+        default: 'main'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          ref: '${{ github.event.inputs.branch }}' # Check out the specified branch
+          fetch-depth: 0 # Fetch all history, including tags for this branch only
+          tags: true # Ensure tags are fetched
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Read current version from Version.txt
+        id: read_version
+        run: |
+          version=$(cat Version.txt)
+          echo "Current version: $version"
+          echo "version=$version" >> $GITHUB_ENV
+
+      - name: Increment version
+        id: increment_version
+        run: |
+          IFS='.' read -r major minor patch <<< "$version"
+          patch=$((patch + 1))
+          new_version="$major.$minor.$patch"
+          echo "New version: $new_version"
+          echo "new_version=$new_version" >> $GITHUB_ENV
+
+      - name: Update Version.txt with new version
+        run: |
+          echo "$new_version" > Version.txt
+
+      - name: Get last release tag
+        id: get_last_tag
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 HEAD^)
+          echo "Last release tag: $last_tag"
+          echo "last_tag=$last_tag" >> $GITHUB_ENV
+
+      - name: Generate release notes
+        run: |
+          # Set timezone to Eastern Time for consistency with expected New York time
+          export TZ="America/New_York"
+
+          # Generate the new release section content
+          new_content="$new_version - Released $(date +"%Y/%m/%d %H:%M:%S")\n\n"
+          new_content+=$(git log ${{ env.last_tag }}..HEAD --pretty=format:"   < %h, %an, %ad >%n   - %s" --date=format:"%Y-%m-%d %H:%M:%S")
+          new_content+="\n\n"
+
+          # Ensure ReleaseNotes.txt exists
+          touch ReleaseNotes.txt
+
+          # Prepend the new content by echoing it first, then appending the existing file
+          echo -e "$new_content$(cat ReleaseNotes.txt)" > ReleaseNotes.txt
+
+          # Commit the updated ReleaseNotes.txt and Version.txt
+          git add Version.txt ReleaseNotes.txt
+          git commit -m "Release version $new_version"
+
+      - name: Tag the new version
+        # env:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use PAT_TOKEN for push permissions
+        run: |
+          git tag "$new_version"
+          git push origin "${{ github.event.inputs.branch }}"
+          git push origin "$new_version"
+
+      - name: Create a GitHub release
+        uses: actions/create-release@v1
+        with:
+          tag_name: '${{ env.new_version }}'
+          release_name: '${{ env.new_version }}'
+          body: 'Automatically generated release for version ${{ env.new_version }}'
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

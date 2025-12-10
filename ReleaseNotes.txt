@@ -1,0 +1,8 @@
+0.0.2 - Released 2025/10/06 18:29:02
+
+   < afcd137, donald, 2025-10-06 18:12:53 >
+   - Comment out GITHUB_TOKEN environment variable in release workflow for tagging versions
+   < c4ffa64, donald, 2025-10-06 17:48:59 >
+   - Update GitHub Actions workflow to use GITHUB_TOKEN for tagging releases
+
+

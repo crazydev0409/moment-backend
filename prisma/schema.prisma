@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String           @id @default(uuid())
+  phoneNumber      String           @unique
+  verified         Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  avatar           String?
+  bio              String?
+  name             String?
+  email            String?          @unique
+  birthday         DateTime?
+  timezone         String           @default("UTC")
+  blockedBy        BlockedContact[] @relation("Blocked")
+  blockedUsers     BlockedContact[] @relation("Blocker")
+  contactOf        Contact[]        @relation("ContactUser")
+  contacts         Contact[]        @relation("UserContacts")
+  moments          Moment[]
+  receivedRequests MomentRequest[]  @relation("RequestReceiver")
+  sentRequests     MomentRequest[]  @relation("RequestSender")
+  notifications    Notification[]
+  tokens           RefreshToken[]
+  devices          UserDevice[]
+}
+
+model Moment {
+  id            Int            @id @default(autoincrement())
+  startTime     DateTime
+  endTime       DateTime
+  availability  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  allDay        Boolean        @default(false)
+  icon          String?
+  notes         String?
+  visibleTo     String[]       @default([])
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  momentRequest MomentRequest?
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  ownerId       String
+  contactUserId String?
+  contactPhone  String
+  displayName   String
+  updatedAt     DateTime @updatedAt
+  importedAt    DateTime @default(now())
+  phoneBookId   String?
+  createdAt     DateTime @default(now())
+  contactUser   User?    @relation("ContactUser", fields: [contactUserId], references: [id])
+  owner         User     @relation("UserContacts", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, contactPhone])
+}
+
+model MomentRequest {
+  id          String   @id @default(cuid())
+  senderId    String
+  receiverId  String
+  startTime   DateTime
+  endTime     DateTime
+  title       String
+  description String?
+  meetingType String?  @default("meet")
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  momentId    Int?     @unique
+  notes       String?
+  moment      Moment?  @relation(fields: [momentId], references: [id])
+  receiver    User     @relation("RequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender      User     @relation("RequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model BlockedContact {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  type        String
+  title       String
+  body        String
+  data        Json?
+  isRead      Boolean   @default(false)
+  isDelivered Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  readAt      DateTime?
+  deliveredAt DateTime?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserDevice {
+  id                    String   @id @default(uuid())
+  userId                String
+  expoPushToken         String   @unique
+  platform              String
+  deviceId              String
+  appVersion            String
+  expoVersion           String
+  isActive              Boolean  @default(true)
+  lastSeen              DateTime @default(now())
+  lastTokenRefresh      DateTime @default(now())
+  tokenValidationStatus String   @default("active")
+  failureCount          Int      @default(0)
+  createdAt             DateTime @default(now())
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, deviceId])
+  @@map("user_devices")
+}
+
+model ScheduledEvent {
+  id           String   @id @default(uuid())
+  eventData    String
+  scheduledFor DateTime
+  status       String   @default("pending")
+  attempts     Int      @default(0)
+  createdAt    DateTime @default(now())
+  
+  @@index([scheduledFor, status])
+  @@map("scheduled_events")
+}
+
+model EventStore {
+  id            String   @id @default(uuid())
+  eventType     String
+  aggregateId   String
+  aggregateType String
+  version       Int
+  eventData     String
+  metadata      Json?
+  timestamp     DateTime
+  createdAt     DateTime @default(now())
+  
+  @@index([aggregateId, aggregateType])
+  @@index([eventType])
+  @@index([timestamp])
+  @@map("event_store")
+}
