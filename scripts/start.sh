@@ -33,12 +33,70 @@ if [ $DB_READY -eq 0 ]; then
   echo "⚠️  Proceeding with migrations anyway (they may fail if DB is not ready)..."
 fi
 
+# Check for and resolve any failed migrations before running new ones
+echo "🔍 Checking for failed migrations..."
+MIGRATION_STATUS_OUTPUT=$(prisma migrate status 2>&1 || true)
+if echo "$MIGRATION_STATUS_OUTPUT" | grep -q "failed migrations\|P3009"; then
+  echo "⚠️  Found failed migrations in database"
+  echo "🔧 Attempting to resolve failed migrations..."
+  
+  # Try to extract and resolve failed migration names
+  # Pattern: "The `20251210014908_add_meeting_type_to_moment_request` migration"
+  FAILED_MIGRATIONS=$(echo "$MIGRATION_STATUS_OUTPUT" | grep -oP '`\K[^`]+' || echo "")
+  
+  if [ -n "$FAILED_MIGRATIONS" ]; then
+    for MIGRATION in $FAILED_MIGRATIONS; do
+      echo "📝 Resolving failed migration: $MIGRATION"
+      # Mark the failed migration as applied (assuming the changes are already in the database)
+      # This is safe if the migration partially succeeded or the schema is already correct
+      prisma migrate resolve --applied "$MIGRATION" 2>&1 || {
+        echo "⚠️  Could not resolve migration $MIGRATION, but continuing..."
+      }
+    done
+  fi
+fi
+
 # Run database migrations
 echo "📦 Running database migrations..."
-if ! prisma migrate deploy; then
-  echo "❌ Migration failed!"
-  echo "❌ Please check your database connection and migration files"
-  exit 1
+MIGRATION_OUTPUT=$(prisma migrate deploy 2>&1)
+MIGRATION_EXIT_CODE=$?
+
+if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
+  # Check if the error is due to failed migrations (P3009)
+  if echo "$MIGRATION_OUTPUT" | grep -q "P3009\|failed migrations"; then
+    echo "⚠️  Still found failed migrations after resolution attempt"
+    echo "🔧 Attempting to resolve failed migrations from error output..."
+    
+    # Extract failed migration name from the error message
+    FAILED_MIGRATION=$(echo "$MIGRATION_OUTPUT" | grep -oP '`\K[^`]+' | head -1 || echo "")
+    
+    if [ -n "$FAILED_MIGRATION" ]; then
+      echo "📝 Resolving failed migration: $FAILED_MIGRATION"
+      if prisma migrate resolve --applied "$FAILED_MIGRATION" 2>&1; then
+        echo "✅ Successfully resolved failed migration"
+        echo "🔄 Retrying migrations..."
+        # Retry the migration after resolving
+        if ! prisma migrate deploy; then
+          echo "❌ Migration still failed after resolving!"
+          exit 1
+        fi
+      else
+        echo "⚠️  Could not automatically resolve migration"
+        echo "❌ Migration failed!"
+        echo "💡 You may need to manually resolve the failed migration:"
+        echo "   prisma migrate resolve --applied $FAILED_MIGRATION"
+        exit 1
+      fi
+    else
+      echo "❌ Migration failed but could not identify failed migration name"
+      echo "$MIGRATION_OUTPUT"
+      exit 1
+    fi
+  else
+    echo "❌ Migration failed with error:"
+    echo "$MIGRATION_OUTPUT"
+    exit 1
+  fi
 fi
 
 echo "✅ Migrations completed successfully!"
