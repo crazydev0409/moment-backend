@@ -172,6 +172,18 @@ export class MaintenanceScheduler {
    */
   private async processScheduledEvents(): Promise<void> {
     try {
+      // Check if table exists first
+      try {
+        await prisma.$queryRaw`SELECT 1 FROM "scheduled_events" LIMIT 1`;
+      } catch (error: any) {
+        // Table doesn't exist, skip processing
+        if (error.code === 'P2021' || error.message?.includes('does not exist')) {
+          console.log('[ScheduledEvents] Table does not exist yet, skipping...');
+          return;
+        }
+        throw error;
+      }
+      
       const dueEvents = await prisma.scheduledEvent.findMany({
         where: {
           scheduledFor: {

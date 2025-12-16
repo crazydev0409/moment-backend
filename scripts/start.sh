@@ -85,6 +85,12 @@ fi
 
 echo "✅ Migrations completed successfully!"
 
+# Ensure missing tables exist (for tables that might not have migrations)
+echo "🔍 Ensuring all required tables exist..."
+node scripts/create-missing-tables.js || {
+  echo "⚠️  Table creation script had issues, but continuing..."
+}
+
 # Start the application
 echo "🚀 Starting server..."
 exec npm start

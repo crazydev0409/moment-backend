@@ -49,8 +49,10 @@ RUN npm install -g prisma@^6.14.0
 RUN mkdir -p ./scripts
 COPY scripts/start.sh ./scripts/start.sh
 COPY scripts/resolve-failed-migrations.js ./scripts/resolve-failed-migrations.js
+COPY scripts/create-missing-tables.js ./scripts/create-missing-tables.js
 RUN chmod +x ./scripts/start.sh
 RUN chmod +x ./scripts/resolve-failed-migrations.js
+RUN chmod +x ./scripts/create-missing-tables.js
 
 # Expose port
 EXPOSE 3000
