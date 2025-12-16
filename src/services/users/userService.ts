@@ -97,6 +97,7 @@ export class UserService {
       bio?: string | null;
       email?: string | null;
       birthday?: Date | null;
+      meetingTypes?: string[] | null;
     }
   ): Promise<User> {
     return prisma.user.update({
@@ -108,6 +109,7 @@ export class UserService {
         bio: data.bio,
         email: data.email ?? undefined,
         birthday: data.birthday ?? undefined,
+        meetingTypes: data.meetingTypes ?? undefined,
         verified: true
       }
     });
@@ -554,28 +556,38 @@ export class UserService {
           ]
         }
       });
+    }
 
-      // Publish moment canceled event to notify the other party
-      try {
-        const { eventPublisher } = getEventSystem();
-        const otherUserId = userId === request.senderId ? request.receiverId : request.senderId;
-        const cancelingUser = await prisma.user.findUnique({ where: { id: userId } });
+    // Publish moment deleted event to notify both parties (canceling is same as deleting)
+    try {
+      const { eventPublisher } = getEventSystem();
+      const otherUserId = userId === request.senderId ? request.receiverId : request.senderId;
 
-        await eventPublisher.publishMomentCanceled(
-          requestId,
-          otherUserId,
-          userId,
-          {
-            canceledByName: cancelingUser?.name || cancelingUser?.phoneNumber || 'User',
-            title: request.title || request.notes || 'Meeting',
-            startTime: request.startTime,
-            endTime: request.endTime
-          }
-        );
-      } catch (error) {
-        console.error('Failed to publish moment canceled event:', error);
-        // Don't fail the cancellation if event publishing fails
-      }
+      console.log('[UserService] Publishing moment deleted event for canceled request:', {
+        requestId,
+        canceledByUserId: userId,
+        otherUserId,
+        senderId: request.senderId,
+        receiverId: request.receiverId
+      });
+
+      // Use moment:deleted event since canceling is the same as deleting
+      await eventPublisher.publishMomentDeleted(
+        requestId, // Use requestId as momentId for the event
+        userId, // The user who canceled
+        {
+          title: request.title || request.notes || 'Meeting',
+          startTime: request.startTime,
+          endTime: request.endTime
+        },
+        otherUserId, // Notify the other user
+        requestId // momentRequestId
+      );
+
+      console.log('[UserService] ✅ Moment deleted event published successfully for canceled request');
+    } catch (error) {
+      console.error('[UserService] ❌ Failed to publish moment deleted event:', error);
+      // Don't fail the cancellation if event publishing fails
     }
 
     // Delete the moment request

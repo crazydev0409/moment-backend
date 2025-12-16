@@ -26,6 +26,9 @@ export const getCurrentUser: CustomRequestHandler = async (req, res) => {
       avatar: (user as any).avatar,
       timezone: (user as any).timezone || 'UTC',
       bio: (user as any).bio,
+      email: (user as any).email,
+      birthday: (user as any).birthday,
+      meetingTypes: (user as any).meetingTypes || [],
       verified: user.verified,
       createdAt: user.createdAt
     });
@@ -41,7 +44,7 @@ export const getCurrentUser: CustomRequestHandler = async (req, res) => {
 export const updateProfile: CustomRequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
-    const { name, avatar, timezone, bio, email, birthday } = req.body;
+    const { name, avatar, timezone, bio, email, birthday, meetingTypes } = req.body;
 
     // Validate timezone if provided
     if (timezone) {
@@ -62,13 +65,28 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
       parsedBirthday = b;
     }
 
+    // Validate meetingTypes if provided
+    if (meetingTypes !== undefined) {
+      if (!Array.isArray(meetingTypes)) {
+        return res.status(400).json({ error: 'meetingTypes must be an array' });
+      }
+      if (meetingTypes.length > 3) {
+        return res.status(400).json({ error: 'You can select up to 3 meeting types' });
+      }
+      // Validate each meeting type is a string
+      if (!meetingTypes.every(type => typeof type === 'string')) {
+        return res.status(400).json({ error: 'All meeting types must be strings' });
+      }
+    }
+
     const updatedUser = await userService.updateUserProfile(userId, {
       name,
       avatar,
       timezone,
       bio,
       email,
-      birthday: parsedBirthday
+      birthday: parsedBirthday,
+      meetingTypes: meetingTypes ?? undefined
     });
 
     return res.json({
@@ -82,6 +100,7 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
         bio: (updatedUser as any).bio,
         email: (updatedUser as any).email,
         birthday: (updatedUser as any).birthday,
+        meetingTypes: (updatedUser as any).meetingTypes || [],
         verified: updatedUser.verified,
         createdAt: updatedUser.createdAt
       }

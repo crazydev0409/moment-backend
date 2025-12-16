@@ -20,7 +20,8 @@ export class EventPublisher {
         title: momentData.notes || 'New Moment',
         startTime: momentData.startTime,
         endTime: momentData.endTime,
-        availability: momentData.availability
+        availability: momentData.availability,
+        visibleTo: momentData.visibleTo || []
       },
       metadata: {
         source: 'moment-service',

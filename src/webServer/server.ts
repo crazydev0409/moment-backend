@@ -6,6 +6,7 @@ import routes from './routes';
 import http from 'http';
 import { initializeEventSystem, shutdownEventSystem } from '../events';
 import { MaintenanceScheduler } from '../jobs/MaintenanceScheduler';
+import { initializeSocketIO } from './socket';
 
 // Create Express app
 export const app = express();
@@ -29,6 +30,9 @@ app.use('/api', routes);
 // Initialize event system and start server
 async function startServer() {
   try {
+    console.log('[Server] Initializing Socket.IO...');
+    initializeSocketIO(server);
+    
     console.log('[Server] Initializing event system...');
     await initializeEventSystem();
     
@@ -44,6 +48,7 @@ async function startServer() {
         console.log(`🚀 Server is running on port ${PORT}`);
         console.log(`📊 Event Bus: ${process.env.EVENT_BUS_ADAPTER || 'memory'}`);
         console.log(`📱 Push Notifications: Expo`);
+        console.log(`🔌 WebSocket: Socket.IO enabled`);
         console.log(`🔧 Maintenance Jobs: Active`);
         console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
       });

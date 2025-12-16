@@ -66,6 +66,26 @@ export const createMoment: CustomRequestHandler = async (req, res) => {
       }
     });
 
+    // Publish moment created event
+    try {
+      const { getEventSystem } = await import('../../events');
+      const { eventPublisher } = getEventSystem();
+      await eventPublisher.publishMomentCreated(
+        String(newMoment.id),
+        req.user!.id,
+        {
+          notes: newMoment.notes,
+          startTime: newMoment.startTime,
+          endTime: newMoment.endTime,
+          availability: newMoment.availability,
+          visibleTo: validatedVisibleTo
+        }
+      );
+    } catch (error) {
+      console.error('Failed to publish moment created event:', error);
+      // Don't fail the creation if event publishing fails
+    }
+
     return res.json({ message: 'Moment created successfully', moment: newMoment });
   } catch (error) {
     console.error('Error creating moment:', error);

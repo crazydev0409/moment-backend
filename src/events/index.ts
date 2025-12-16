@@ -2,6 +2,7 @@ import { EventBusFactory } from './EventBusFactory';
 import { EventPublisher } from './EventPublisher';
 import { ExpoNotificationHandler } from './handlers/ExpoNotificationHandler';
 import { DatabaseEventHandler } from './handlers/DatabaseEventHandler';
+import { WebSocketEventHandler } from './handlers/WebSocketEventHandler';
 import { EventType } from './types/Event';
 import { EventBus } from './EventBus';
 
@@ -31,6 +32,7 @@ export async function initializeEventSystem(): Promise<{
     // Set up event handlers
     const expoHandler = new ExpoNotificationHandler();
     const dbHandler = new DatabaseEventHandler();
+    const wsHandler = new WebSocketEventHandler();
 
     // Subscribe Expo notification handler to relevant events
     await eventBus.subscribe(EventType.MOMENT_REQUEST_CREATED, expoHandler.handleEvent);
@@ -41,6 +43,16 @@ export async function initializeEventSystem(): Promise<{
     await eventBus.subscribe(EventType.CONTACT_REGISTERED, expoHandler.handleEvent);
     await eventBus.subscribe(EventType.MOMENT_UPDATED, expoHandler.handleEvent);
     await eventBus.subscribe(EventType.MOMENT_DELETED, expoHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_CREATED, expoHandler.handleEvent);
+
+    // Subscribe WebSocket handler to broadcast events to connected clients
+    await eventBus.subscribe(EventType.MOMENT_REQUEST_CREATED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_REQUEST_APPROVED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_REQUEST_REJECTED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_REQUEST_CANCELED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_CREATED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_UPDATED, wsHandler.handleEvent);
+    await eventBus.subscribe(EventType.MOMENT_DELETED, wsHandler.handleEvent);
 
     // Removed DB-wide event storage; rely on broker retention (Kafka/EventHub)
     
