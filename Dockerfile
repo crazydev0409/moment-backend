@@ -45,10 +45,12 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 # Install Prisma CLI for migrations (needed in production)
 RUN npm install -g prisma@^6.14.0
 
-# Create scripts directory and copy startup script
+# Create scripts directory and copy startup scripts
 RUN mkdir -p ./scripts
 COPY scripts/start.sh ./scripts/start.sh
+COPY scripts/resolve-failed-migrations.js ./scripts/resolve-failed-migrations.js
 RUN chmod +x ./scripts/start.sh
+RUN chmod +x ./scripts/resolve-failed-migrations.js
 
 # Expose port
 EXPOSE 3000

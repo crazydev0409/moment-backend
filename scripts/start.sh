@@ -35,26 +35,10 @@ fi
 
 # Check for and resolve any failed migrations before running new ones
 echo "🔍 Checking for failed migrations..."
-MIGRATION_STATUS_OUTPUT=$(prisma migrate status 2>&1 || true)
-if echo "$MIGRATION_STATUS_OUTPUT" | grep -q "failed migrations\|P3009"; then
-  echo "⚠️  Found failed migrations in database"
-  echo "🔧 Attempting to resolve failed migrations..."
-  
-  # Try to extract and resolve failed migration names
-  # Pattern: "The `20251210014908_add_meeting_type_to_moment_request` migration"
-  FAILED_MIGRATIONS=$(echo "$MIGRATION_STATUS_OUTPUT" | grep -oP '`\K[^`]+' || echo "")
-  
-  if [ -n "$FAILED_MIGRATIONS" ]; then
-    for MIGRATION in $FAILED_MIGRATIONS; do
-      echo "📝 Resolving failed migration: $MIGRATION"
-      # Mark the failed migration as applied (assuming the changes are already in the database)
-      # This is safe if the migration partially succeeded or the schema is already correct
-      prisma migrate resolve --applied "$MIGRATION" 2>&1 || {
-        echo "⚠️  Could not resolve migration $MIGRATION, but continuing..."
-      }
-    done
-  fi
-fi
+# Don't fail if resolution script has issues - we'll try migrations anyway
+node scripts/resolve-failed-migrations.js 2>&1 || {
+  echo "⚠️  Migration resolution script had issues, but continuing with migration attempt..."
+}
 
 # Run database migrations
 echo "📦 Running database migrations..."
