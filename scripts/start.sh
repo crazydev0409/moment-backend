@@ -42,8 +42,18 @@ node scripts/resolve-failed-migrations.js 2>&1 || {
 
 # Run database migrations
 echo "📦 Running database migrations..."
+echo "🔍 Checking migration files..."
+if [ -d "prisma/migrations" ]; then
+  echo "✅ Migrations directory exists"
+  ls -la prisma/migrations/ 2>&1 || echo "⚠️  Could not list migrations directory"
+  find prisma/migrations -name "migration.sql" 2>&1 || echo "⚠️  No migration.sql files found"
+else
+  echo "⚠️  Migrations directory does not exist!"
+fi
 MIGRATION_OUTPUT=$(prisma migrate deploy 2>&1)
 MIGRATION_EXIT_CODE=$?
+echo "Migration deploy output:"
+echo "$MIGRATION_OUTPUT"
 
 if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
   # Check if the error is due to failed migrations (P3009)

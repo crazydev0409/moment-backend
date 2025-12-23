@@ -11,6 +11,7 @@ router.use(authenticate);
 // User profile routes
 router.get('/profile', asHandler(userController.getCurrentUser));
 router.put('/profile', asHandler(userController.updateProfile));
+router.delete('/account', asHandler(userController.deleteAccount));
 
 // Contact routes
 router.get('/contacts', asHandler(userController.getContacts));

@@ -989,6 +989,63 @@ export const swaggerDocument = {
         }
       }
     },
+    '/users/account': {
+      delete: {
+        summary: 'Delete user account',
+        description: 'Permanently delete the authenticated user\'s account and all associated data. This action cannot be undone.',
+        tags: ['Users'],
+        responses: {
+          '200': {
+            description: 'Account deleted successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: {
+                      type: 'string',
+                      example: 'Account deleted successfully'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '401': {
+            description: 'Unauthorized',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: {
+                      type: 'string',
+                      example: 'Unauthorized'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '500': {
+            description: 'Internal server error',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: {
+                      type: 'string',
+                      example: 'Failed to delete account'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/users/notifications': {
       get: {
         summary: 'Get user notifications',

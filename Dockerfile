@@ -37,10 +37,12 @@ RUN npm ci --only=production
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Copy Prisma schema and generated client
+# Copy Prisma schema, migrations, and generated client
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Ensure migrations directory exists and is accessible
+RUN ls -la prisma/migrations/ 2>&1 || echo "Migrations directory check"
 
 # Install Prisma CLI for migrations (needed in production)
 RUN npm install -g prisma@^6.14.0

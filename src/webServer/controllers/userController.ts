@@ -570,6 +570,23 @@ export const getBlockedUsers: CustomRequestHandler = async (req, res) => {
 };
 
 /**
+ * Delete the current user's account
+ */
+export const deleteAccount: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    
+    // Delete the user account (this will cascade delete related records)
+    await userService.deleteUser(userId);
+
+    return res.json({ message: 'Account deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+};
+
+/**
  * Get user notifications
  */
 export const getUserNotifications: CustomRequestHandler = async (req, res) => {
