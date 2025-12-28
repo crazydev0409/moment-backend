@@ -3,6 +3,7 @@ import * as jwt from 'jsonwebtoken';
 import { jwtSecret, jwtRefreshSecret } from '../../config/config';
 import { verifyPhoneNumber, checkVerification } from '../../services/twilio';
 import { validatePhoneNumber } from '../../utils/validation';
+import { hashPhoneNumber } from '../../utils/phoneHash';
 import prisma from '../../services/prisma';
 import crypto from 'crypto';
 import { JwtPayload } from 'jsonwebtoken';
@@ -29,15 +30,19 @@ export const register: CustomRequestHandler = async (req, res) => {
         error: 'Invalid phone number format. Please use E.164 format (e.g., +1234567890)'
       });
     }
+
+    // Hash phone number for database storage
+    const hashedPhoneNumber = hashPhoneNumber(phoneNumber);
+
     // Check if user already exists
     let user = await prisma.user.findUnique({
-      where: { phoneNumber }
+      where: { phoneNumber: hashedPhoneNumber }
     });
 
     if (!user) {
       user = await prisma.user.create({
         data: {
-          phoneNumber,
+          phoneNumber: hashedPhoneNumber,
           verified: false
         }
       });

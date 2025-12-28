@@ -10,6 +10,7 @@ export interface UserDevice {
   appVersion: string;
   expoVersion: string;
   isActive: boolean;
+  rememberMe: boolean;
   lastSeen: Date;
   lastTokenRefresh: Date;
   tokenValidationStatus: TokenStatus;
@@ -26,11 +27,11 @@ export enum TokenStatus {
 
 export class UserDeviceRepository {
   async registerOrUpdateDevice(
-    userId: string, 
+    userId: string,
     deviceData: Partial<UserDevice>
   ): Promise<UserDevice> {
     const now = new Date();
-    
+
     // Try to find existing device by deviceId first
     const existingDevice = await prisma.userDevice.findFirst({
       where: {
@@ -47,6 +48,7 @@ export class UserDeviceRepository {
           expoPushToken: deviceData.expoPushToken,
           appVersion: deviceData.appVersion,
           expoVersion: deviceData.expoVersion,
+          rememberMe: deviceData.rememberMe !== undefined ? deviceData.rememberMe : existingDevice.rememberMe,
           lastSeen: now,
           lastTokenRefresh: now,
           tokenValidationStatus: TokenStatus.ACTIVE,
@@ -66,6 +68,7 @@ export class UserDeviceRepository {
           appVersion: deviceData.appVersion!,
           expoVersion: deviceData.expoVersion!,
           isActive: true,
+          rememberMe: deviceData.rememberMe || false,
           lastSeen: now,
           lastTokenRefresh: now,
           tokenValidationStatus: TokenStatus.ACTIVE,
@@ -85,7 +88,7 @@ export class UserDeviceRepository {
         failureCount: { increment: 1 }
       }
     });
-    
+
     console.log(`Marked token as invalid: ${expoPushToken}, reason: ${reason}`);
   }
 
@@ -203,6 +206,38 @@ export class UserDeviceRepository {
         tokenValidationStatus: TokenStatus.ACTIVE,
         failureCount: 0
       }
+    });
+  }
+
+  async getDeviceByDeviceId(deviceId: string): Promise<UserDevice | null> {
+    return await prisma.userDevice.findFirst({
+      where: {
+        deviceId,
+        isActive: true,
+        rememberMe: true
+      }
+    }) as UserDevice | null;
+  }
+
+  async getUserByDeviceId(deviceId: string): Promise<any | null> {
+    const device = await prisma.userDevice.findFirst({
+      where: {
+        deviceId,
+        isActive: true,
+        rememberMe: true
+      },
+      include: {
+        user: true
+      }
+    });
+
+    return device?.user || null;
+  }
+
+  async updateRememberMe(deviceId: string, userId: string, rememberMe: boolean): Promise<void> {
+    await prisma.userDevice.updateMany({
+      where: { deviceId, userId },
+      data: { rememberMe }
     });
   }
 }

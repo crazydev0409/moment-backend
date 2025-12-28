@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -129,13 +129,14 @@ model UserDevice {
   appVersion            String
   expoVersion           String
   isActive              Boolean  @default(true)
+  rememberMe            Boolean  @default(false)
   lastSeen              DateTime @default(now())
   lastTokenRefresh      DateTime @default(now())
   tokenValidationStatus String   @default("active")
   failureCount          Int      @default(0)
   createdAt             DateTime @default(now())
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   @@unique([userId, deviceId])
   @@map("user_devices")
 }
@@ -147,7 +148,7 @@ model ScheduledEvent {
   status       String   @default("pending")
   attempts     Int      @default(0)
   createdAt    DateTime @default(now())
-  
+
   @@index([scheduledFor, status])
   @@map("scheduled_events")
 }
@@ -162,7 +163,7 @@ model EventStore {
   metadata      Json?
   timestamp     DateTime
   createdAt     DateTime @default(now())
-  
+
   @@index([aggregateId, aggregateType])
   @@index([eventType])
   @@index([timestamp])

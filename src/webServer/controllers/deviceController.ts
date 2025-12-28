@@ -2,6 +2,8 @@ import { CustomRequestHandler } from '../../types/express';
 import { UserDeviceRepository } from '../../repositories/UserDeviceRepository';
 import { validatePhoneNumber } from '../../utils/validation';
 import prisma from '../../services/prisma';
+import * as jwt from 'jsonwebtoken';
+import { jwtSecret } from '../../config/config';
 
 const deviceRepo = new UserDeviceRepository();
 
@@ -10,7 +12,7 @@ const deviceRepo = new UserDeviceRepository();
  */
 export const registerDevice: CustomRequestHandler = async (req, res) => {
   try {
-    const { expoPushToken, deviceId, platform, appVersion, expoVersion } = req.body;
+    const { expoPushToken, deviceId, platform, appVersion, expoVersion, rememberMe } = req.body;
     const userId = req.user!.id;
 
     // Validate required fields
@@ -35,7 +37,8 @@ export const registerDevice: CustomRequestHandler = async (req, res) => {
       deviceId,
       platform,
       appVersion,
-      expoVersion
+      expoVersion,
+      rememberMe: rememberMe || false
     });
 
     res.json({
@@ -50,14 +53,14 @@ export const registerDevice: CustomRequestHandler = async (req, res) => {
 
   } catch (error: any) {
     console.error('Device registration error:', error);
-    
+
     if (error.code === 'P2002') { // Prisma unique constraint error
       return res.status(409).json({
         success: false,
         message: 'This push token is already registered to another device'
       });
     }
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to register device'
@@ -135,7 +138,7 @@ export const deactivateDevice: CustomRequestHandler = async (req, res) => {
 export const updateDeviceActivity: CustomRequestHandler = async (req, res) => {
   try {
     const { expoPushToken } = req.body;
-    
+
     if (!expoPushToken) {
       return res.status(400).json({
         success: false,
@@ -204,9 +207,9 @@ export const getNotifications: CustomRequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
     const { page = 1, limit = 20 } = req.query;
-    
+
     const skip = (Number(page) - 1) * Number(limit);
-    
+
     const [notifications, total] = await Promise.all([
       prisma.notification.findMany({
         where: { userId },
@@ -245,13 +248,13 @@ export const markNotificationRead: CustomRequestHandler = async (req, res) => {
   try {
     const { notificationId } = req.params;
     const userId = req.user!.id;
-    
+
     await prisma.notification.updateMany({
-      where: { 
+      where: {
         id: notificationId,
         userId
       },
-      data: { 
+      data: {
         isRead: true,
         readAt: new Date()
       }
@@ -267,6 +270,88 @@ export const markNotificationRead: CustomRequestHandler = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to mark notification as read'
+    });
+  }
+};
+
+/**
+ * Check if device is registered with remember me enabled
+ */
+export const checkDeviceRegistration: CustomRequestHandler = async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Device ID is required'
+      });
+    }
+
+    const user = await deviceRepo.getUserByDeviceId(deviceId);
+
+    if (!user) {
+      return res.json({
+        success: true,
+        registered: false,
+        message: 'Device not registered or remember me not enabled'
+      });
+    }
+
+    // Generate access token for the user
+    const accessToken = jwt.sign({ id: user.id, phoneNumber: user.phoneNumber }, jwtSecret, { expiresIn: '10000d' });
+
+    res.json({
+      success: true,
+      registered: true,
+      user: {
+        id: user.id,
+        phoneNumber: user.phoneNumber,
+        name: user.name,
+        avatar: user.avatar,
+        email: user.email,
+        bio: user.bio,
+        birthday: user.birthday,
+        timezone: user.timezone,
+        meetingTypes: user.meetingTypes
+      },
+      accessToken
+    });
+  } catch (error: any) {
+    console.error('Check device registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check device registration'
+    });
+  }
+};
+
+/**
+ * Update remember me preference for a device
+ */
+export const updateRememberMe: CustomRequestHandler = async (req, res) => {
+  try {
+    const { deviceId, rememberMe } = req.body;
+    const userId = req.user!.id;
+
+    if (!deviceId || rememberMe === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Device ID and remember me preference are required'
+      });
+    }
+
+    await deviceRepo.updateRememberMe(deviceId, userId, rememberMe);
+
+    res.json({
+      success: true,
+      message: 'Remember me preference updated'
+    });
+  } catch (error: any) {
+    console.error('Update remember me error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update remember me preference'
     });
   }
 };

@@ -1,6 +1,7 @@
 import prisma from '../../services/prisma';
 import { User, Prisma } from '@prisma/client';
 import { getEventSystem } from '../../events';
+import { hashPhoneNumber } from '../../utils/phoneHash';
 
 // Define types based on schema
 type WorkingHours = {
@@ -80,8 +81,9 @@ export class UserService {
    * Get a user by phone number
    */
   async getUserByPhoneNumber(phoneNumber: string): Promise<User | null> {
+    const hashedPhoneNumber = hashPhoneNumber(phoneNumber);
     return prisma.user.findUnique({
-      where: { phoneNumber }
+      where: { phoneNumber: hashedPhoneNumber }
     });
   }
 
@@ -318,7 +320,7 @@ export class UserService {
           startTime: request.startTime,
           endTime: request.endTime,
           availability: 'private',
-          notes: `Moment with ${sender?.phoneNumber || 'a contact'}: ${request.notes || 'Meeting'}`,
+          notes: `Moment with ${sender?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
           allDay: false,
           visibleTo: [request.senderId] // Make visible to sender
         }
@@ -331,7 +333,7 @@ export class UserService {
           startTime: request.startTime,
           endTime: request.endTime,
           availability: 'private',
-          notes: `Moment with ${receiver?.phoneNumber || 'a contact'}: ${request.notes || 'Meeting'}`,
+          notes: `Moment with ${receiver?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
           allDay: false,
           visibleTo: [receiverId] // Make visible to receiver
         }
@@ -608,12 +610,15 @@ export class UserService {
       normalizedPhone = `+${normalizedPhone}`;
     }
 
+    // Hash phone number for database lookup and storage
+    const hashedPhoneNumber = hashPhoneNumber(normalizedPhone);
+
     // Check if contact already exists
     const existingContact = await prisma.contact.findUnique({
       where: {
         ownerId_contactPhone: {
           ownerId,
-          contactPhone: normalizedPhone
+          contactPhone: hashedPhoneNumber
         }
       }
     });
@@ -627,7 +632,7 @@ export class UserService {
 
     // Find if this phone belongs to a registered user
     const contactUser = await prisma.user.findUnique({
-      where: { phoneNumber: normalizedPhone },
+      where: { phoneNumber: hashedPhoneNumber },
       select: {
         id: true,
         name: true,
@@ -638,7 +643,7 @@ export class UserService {
     const contact = await prisma.contact.create({
       data: {
         ownerId,
-        contactPhone: normalizedPhone,
+        contactPhone: hashedPhoneNumber,
         contactUserId: contactUser?.id || null,
         displayName: displayName || normalizedPhone,
         updatedAt: new Date(),
@@ -764,9 +769,12 @@ export class UserService {
         // Always prefix with + for E.164 format
         normalizedPhone = `+${digitsOnly}`;
 
+        // Hash phone number for database lookup and storage
+        const hashedPhoneNumber = hashPhoneNumber(normalizedPhone);
+
         // Find if this phone belongs to a registered user
         const contactUser = await prisma.user.findUnique({
-          where: { phoneNumber: normalizedPhone }
+          where: { phoneNumber: hashedPhoneNumber }
         });
 
         // Check if contact already exists
@@ -774,7 +782,7 @@ export class UserService {
           where: {
             ownerId_contactPhone: {
               ownerId,
-              contactPhone: normalizedPhone
+              contactPhone: hashedPhoneNumber
             }
           }
         });
@@ -796,7 +804,7 @@ export class UserService {
           await prisma.contact.create({
             data: {
               ownerId,
-              contactPhone: normalizedPhone,
+              contactPhone: hashedPhoneNumber,
               contactUserId: contactUser?.id || null,
               displayName: contact.displayName,
               phoneBookId: contact.phoneBookId
