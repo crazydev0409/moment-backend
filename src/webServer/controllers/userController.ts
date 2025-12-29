@@ -2,6 +2,7 @@ import { Request as _Request, Response as _Response } from 'express';
 import { CustomRequestHandler } from '../../types/express';
 import { UserService } from '../../services/users/userService';
 import prisma from '../../services/prisma';
+import { normalizePhoneNumber } from '../../utils/phoneUtils';
 // Old notification service removed - now using event system
 
 const userService = new UserService();
@@ -140,11 +141,12 @@ export const addContact: CustomRequestHandler = async (req, res) => {
       return res.status(400).json({ error: 'Contact phone number is required' });
     }
 
-    // Basic E.164 format validation
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
-    if (!phoneRegex.test(contactPhone)) {
+    // Basic E.164 format validation using utility
+    try {
+      normalizePhoneNumber(contactPhone);
+    } catch (e) {
       return res.status(400).json({
-        error: 'Phone number must be in E.164 format (e.g., +1234567890)'
+        error: 'Invalid phone number format. Please provide a valid phone number.'
       });
     }
 
@@ -238,15 +240,21 @@ export const importContacts: CustomRequestHandler = async (req, res) => {
     }
 
     // Validate each contact has required fields
+    const validContacts: Array<{ phoneNumber: string; displayName: string; phoneBookId?: string }> = [];
     for (const contact of contacts) {
       if (!contact.phoneNumber || !contact.displayName) {
-        return res.status(400).json({
-          error: 'Each contact must have phoneNumber and displayName'
-        });
+        continue;
       }
+      validContacts.push(contact);
     }
 
-    const result = await userService.importContacts(userId, contacts);
+    if (validContacts.length === 0) {
+      return res.status(400).json({
+        error: 'No valid contacts provided. Each contact must have phoneNumber and displayName.'
+      });
+    }
+
+    const result = await userService.importContacts(userId, validContacts);
 
     return res.json({
       message: 'Contacts imported successfully',
@@ -575,7 +583,7 @@ export const getBlockedUsers: CustomRequestHandler = async (req, res) => {
 export const deleteAccount: CustomRequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
-    
+
     // Delete the user account (this will cascade delete related records)
     await userService.deleteUser(userId);
 

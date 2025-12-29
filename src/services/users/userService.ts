@@ -2,6 +2,7 @@ import prisma from '../../services/prisma';
 import { User, Prisma } from '@prisma/client';
 import { getEventSystem } from '../../events';
 import { hashPhoneNumber } from '../../utils/phoneHash';
+import { normalizePhoneNumber } from '../../utils/phoneUtils';
 
 // Define types based on schema
 type WorkingHours = {
@@ -603,27 +604,49 @@ export class UserService {
    */
   async addContact(ownerId: string, contactPhone: string, displayName?: string): Promise<Contact> {
     // Normalize phone number to E.164 format
-    let normalizedPhone = contactPhone.trim();
-
-    // Basic validation - this should be more robust in production
-    if (!normalizedPhone.startsWith('+')) {
-      normalizedPhone = `+${normalizedPhone}`;
+    let normalizedPhone: string;
+    try {
+      normalizedPhone = normalizePhoneNumber(contactPhone);
+    } catch (e) {
+      // Fallback for safety, though controller should catch this
+      normalizedPhone = contactPhone.startsWith('+') ? contactPhone : `+${contactPhone.replace(/\D/g, '')}`;
     }
 
-    // Hash phone number for database lookup and storage
+    // Hash phone number for legacy lookup (to check if it exists as a hash)
     const hashedPhoneNumber = hashPhoneNumber(normalizedPhone);
 
-    // Check if contact already exists
-    const existingContact = await prisma.contact.findUnique({
+    // Check if contact already exists (by plain number OR by hash)
+    const existingContact = await prisma.contact.findFirst({
       where: {
-        ownerId_contactPhone: {
-          ownerId,
-          contactPhone: hashedPhoneNumber
-        }
+        ownerId,
+        OR: [
+          { contactPhone: normalizedPhone },
+          { contactPhone: hashedPhoneNumber }
+        ]
       }
     });
 
     if (existingContact) {
+      // If found by hash, migrate to plain number
+      if (existingContact.contactPhone === hashedPhoneNumber) {
+        return prisma.contact.update({
+          where: { id: existingContact.id },
+          data: {
+            contactPhone: normalizedPhone,
+            updatedAt: new Date()
+          },
+          include: {
+            contactUser: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true
+              }
+            }
+          }
+        }) as Promise<Contact>;
+      }
+
       return {
         ...existingContact,
         contactUser: undefined
@@ -631,8 +654,14 @@ export class UserService {
     }
 
     // Find if this phone belongs to a registered user
-    const contactUser = await prisma.user.findUnique({
-      where: { phoneNumber: hashedPhoneNumber },
+    // We check both plain (new users) and hash (legacy users)
+    const contactUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phoneNumber: normalizedPhone },
+          { phoneNumber: hashedPhoneNumber }
+        ]
+      },
       select: {
         id: true,
         name: true,
@@ -643,7 +672,7 @@ export class UserService {
     const contact = await prisma.contact.create({
       data: {
         ownerId,
-        contactPhone: hashedPhoneNumber,
+        contactPhone: normalizedPhone, // Store PLAIN number
         contactUserId: contactUser?.id || null,
         displayName: displayName || normalizedPhone,
         updatedAt: new Date(),
@@ -759,39 +788,51 @@ export class UserService {
     for (const contact of contacts) {
       try {
         // Normalize phone number to E.164 format
-        // Keep the leading + if present, remove all non-numeric characters (spaces, dashes, etc.)
-        let normalizedPhone = contact.phoneNumber.trim();
+        let normalizedPhone: string;
+        try {
+          normalizedPhone = normalizePhoneNumber(contact.phoneNumber);
+        } catch (e) {
+          // If normalization fails, try a basic fallback or skip
+          console.warn(`Failed to normalize ${contact.phoneNumber}, trying basic strip`);
+          normalizedPhone = `+${contact.phoneNumber.replace(/\D/g, '')}`;
+          if (normalizedPhone.length < 5) { // Too short to be valid
+            failed++;
+            continue;
+          }
+        }
 
-        // Remove all non-numeric characters (spaces, dashes, parentheses, etc.)
-        // This keeps only digits
-        const digitsOnly = normalizedPhone.replace(/\D/g, '');
-
-        // Always prefix with + for E.164 format
-        normalizedPhone = `+${digitsOnly}`;
-
-        // Hash phone number for database lookup and storage
+        // Hash phone number for legacy lookup
         const hashedPhoneNumber = hashPhoneNumber(normalizedPhone);
 
         // Find if this phone belongs to a registered user
-        const contactUser = await prisma.user.findUnique({
-          where: { phoneNumber: hashedPhoneNumber }
+        // Check both plain and hash
+        const contactUser = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { phoneNumber: normalizedPhone },
+              { phoneNumber: hashedPhoneNumber }
+            ]
+          }
         });
 
         // Check if contact already exists
-        const existingContact = await prisma.contact.findUnique({
+        // We look for EITHER the normalized plain number OR the legacy hash
+        const existingContact = await prisma.contact.findFirst({
           where: {
-            ownerId_contactPhone: {
-              ownerId,
-              contactPhone: hashedPhoneNumber
-            }
+            ownerId,
+            OR: [
+              { contactPhone: normalizedPhone },
+              { contactPhone: hashedPhoneNumber }
+            ]
           }
         });
 
         if (existingContact) {
-          // Update existing contact
+          // Update existing contact (and migrate hash -> plain if needed)
           await prisma.contact.update({
             where: { id: existingContact.id },
             data: {
+              contactPhone: normalizedPhone, // Always ensure we are storing the plain normalized number
               displayName: contact.displayName,
               phoneBookId: contact.phoneBookId,
               contactUserId: contactUser?.id || existingContact.contactUserId,
@@ -804,16 +845,17 @@ export class UserService {
           await prisma.contact.create({
             data: {
               ownerId,
-              contactPhone: hashedPhoneNumber,
-              contactUserId: contactUser?.id || null,
+              contactPhone: normalizedPhone,
               displayName: contact.displayName,
-              phoneBookId: contact.phoneBookId
+              phoneBookId: contact.phoneBookId,
+              contactUserId: contactUser?.id || null,
+              importedAt: new Date()
             }
           });
           imported++;
         }
       } catch (error) {
-        console.error('Failed to import contact:', error);
+        console.error('Error importing contact:', error);
         failed++;
       }
     }
