@@ -123,17 +123,12 @@ model Notification {
 model UserDevice {
   id                    String   @id @default(uuid())
   userId                String
-  expoPushToken         String   @unique
   platform              String
   deviceId              String
   appVersion            String
-  expoVersion           String
   isActive              Boolean  @default(true)
   rememberMe            Boolean  @default(false)
   lastSeen              DateTime @default(now())
-  lastTokenRefresh      DateTime @default(now())
-  tokenValidationStatus String   @default("active")
-  failureCount          Int      @default(0)
   createdAt             DateTime @default(now())
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 

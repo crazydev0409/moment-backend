@@ -8,19 +8,18 @@ import { jwtSecret } from '../../config/config';
 const deviceRepo = new UserDeviceRepository();
 
 /**
- * Register or update a user's device with Expo push token
+ * Register or update a user's device
  */
 export const registerDevice: CustomRequestHandler = async (req, res) => {
   try {
-    const { expoPushToken, deviceId, platform, appVersion, expoVersion, rememberMe } = req.body;
-    console.log({ expoPushToken, deviceId, platform, appVersion, expoVersion, rememberMe })
+    const { deviceId, platform, appVersion, rememberMe } = req.body;
     const userId = req.user!.id;
 
     // Validate required fields
-    if (!expoPushToken || !deviceId || !platform || !appVersion || !expoVersion) {
+    if (!deviceId || !platform || !appVersion) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: expoPushToken, deviceId, platform, appVersion, expoVersion'
+        message: 'Missing required fields: deviceId, platform, appVersion'
       });
     }
 
@@ -34,11 +33,9 @@ export const registerDevice: CustomRequestHandler = async (req, res) => {
 
     // Register/update device
     const device = await deviceRepo.registerOrUpdateDevice(userId, {
-      expoPushToken,
       deviceId,
       platform,
       appVersion,
-      expoVersion,
       rememberMe: rememberMe || false
     });
 
@@ -47,21 +44,12 @@ export const registerDevice: CustomRequestHandler = async (req, res) => {
       message: 'Device registered successfully',
       data: {
         deviceId: device.id,
-        status: device.tokenValidationStatus,
-        lastTokenRefresh: device.lastTokenRefresh
+        lastSeen: device.lastSeen
       }
     });
 
   } catch (error: any) {
     console.error('Device registration error:', error);
-
-    if (error.code === 'P2002') { // Prisma unique constraint error
-      return res.status(409).json({
-        success: false,
-        message: 'This push token is already registered to another device'
-      });
-    }
-
     res.status(500).json({
       success: false,
       message: 'Failed to register device'
@@ -87,7 +75,6 @@ export const getUserDevices: CustomRequestHandler = async (req, res) => {
           appVersion: device.appVersion,
           isActive: device.isActive,
           lastSeen: device.lastSeen,
-          status: device.tokenValidationStatus,
           createdAt: device.createdAt
         }))
       }
@@ -138,16 +125,16 @@ export const deactivateDevice: CustomRequestHandler = async (req, res) => {
  */
 export const updateDeviceActivity: CustomRequestHandler = async (req, res) => {
   try {
-    const { expoPushToken } = req.body;
+    const { deviceId } = req.body;
 
-    if (!expoPushToken) {
+    if (!deviceId) {
       return res.status(400).json({
         success: false,
-        message: 'Expo push token is required'
+        message: 'Device ID is required'
       });
     }
 
-    await deviceRepo.updateDeviceLastSeen(expoPushToken);
+    await deviceRepo.updateDeviceLastSeen(deviceId);
 
     res.json({
       success: true,

@@ -1,20 +1,14 @@
 import * as cron from 'node-cron';
 import { UserDeviceRepository } from '../repositories/UserDeviceRepository';
-import { Expo } from 'expo-server-sdk';
 import prisma from '../services/prisma';
 import { getEventSystem } from '../events';
 
 export class MaintenanceScheduler {
   private deviceRepo: UserDeviceRepository;
-  private expo: Expo;
   private scheduledTasks: cron.ScheduledTask[] = [];
 
   constructor() {
     this.deviceRepo = new UserDeviceRepository();
-    this.expo = new Expo({
-      accessToken: process.env.EXPO_ACCESS_TOKEN,
-      useFcmV1: true
-    });
   }
 
   /**
@@ -22,37 +16,6 @@ export class MaintenanceScheduler {
    */
   start(): void {
     console.log('[MaintenanceScheduler] Starting maintenance jobs...');
-
-    // Clean up stale tokens every 6 hours
-    this.scheduledTasks.push(
-      cron.schedule('0 */6 * * *', async () => {
-        console.log('[MaintenanceScheduler] Running token cleanup job...');
-        try {
-          const cleanedCount = await this.deviceRepo.cleanupStaleTokens();
-          console.log(`[MaintenanceScheduler] Cleaned up ${cleanedCount} stale tokens`);
-        } catch (error) {
-          console.error('[MaintenanceScheduler] Token cleanup failed:', error);
-        }
-      }, {
-        name: 'token-cleanup',
-        timezone: 'UTC'
-      })
-    );
-
-    // Validate suspected invalid tokens every hour
-    this.scheduledTasks.push(
-      cron.schedule('0 * * * *', async () => {
-        console.log('[MaintenanceScheduler] Running token validation job...');
-        try {
-          await this.validateSuspectedTokens();
-        } catch (error) {
-          console.error('[MaintenanceScheduler] Token validation failed:', error);
-        }
-      }, {
-        name: 'token-validation',
-        timezone: 'UTC'
-      })
-    );
 
     // Process scheduled events every minute
     this.scheduledTasks.push(
@@ -106,65 +69,13 @@ export class MaintenanceScheduler {
    */
   stop(): void {
     console.log('[MaintenanceScheduler] Stopping maintenance jobs...');
-    
+
     this.scheduledTasks.forEach(task => {
       task.stop();
     });
-    
+
     this.scheduledTasks = [];
     console.log('[MaintenanceScheduler] All maintenance jobs stopped');
-  }
-
-  /**
-   * Validate suspected invalid tokens by sending test notifications
-   */
-  private async validateSuspectedTokens(): Promise<void> {
-    const suspectedDevices = await this.deviceRepo.getSuspectedInvalidDevices();
-    
-    if (suspectedDevices.length === 0) {
-      return;
-    }
-
-    console.log(`[TokenValidation] Validating ${suspectedDevices.length} suspected tokens...`);
-
-    // Send silent notifications to test token validity
-    const messages = suspectedDevices.map(device => ({
-      to: device.expoPushToken,
-      title: '', // Silent notification
-      body: '',
-      data: { type: 'token_validation' },
-      sound: undefined,
-      badge: undefined,
-      priority: 'normal' as const,
-      originalToken: device.expoPushToken
-    }));
-
-    try {
-      const chunks = this.expo.chunkPushNotifications(messages);
-      
-      for (const chunk of chunks) {
-        const tickets = await this.expo.sendPushNotificationsAsync(chunk);
-        
-        tickets.forEach((ticket, index) => {
-          const device = suspectedDevices[index];
-          
-          if (ticket.status === 'error') {
-            if (ticket.details?.error === 'DeviceNotRegistered') {
-              this.deviceRepo.markTokenAsInvalid(device.expoPushToken, 'DeviceNotRegistered');
-            } else {
-              this.deviceRepo.incrementFailureCount(device.expoPushToken);
-            }
-          } else {
-            // Token is working, mark as active
-            this.deviceRepo.markTokenAsActive(device.id);
-          }
-        });
-      }
-      
-      console.log(`[TokenValidation] Validated ${suspectedDevices.length} tokens`);
-    } catch (error) {
-      console.error('[TokenValidation] Validation failed:', error);
-    }
   }
 
   /**
@@ -183,7 +94,7 @@ export class MaintenanceScheduler {
         }
         throw error;
       }
-      
+
       const dueEvents = await prisma.scheduledEvent.findMany({
         where: {
           scheduledFor: {
@@ -211,23 +122,23 @@ export class MaintenanceScheduler {
       for (const scheduledEvent of dueEvents) {
         try {
           const event = JSON.parse(scheduledEvent.eventData);
-          
+
           // Publish the event
           await eventBus.publish(event);
-          
+
           // Mark as fired
           await prisma.scheduledEvent.update({
             where: { id: scheduledEvent.id },
             data: { status: 'fired' }
           });
-          
+
         } catch (error) {
           console.error(`[ScheduledEvents] Failed to process event ${scheduledEvent.id}:`, error);
-          
+
           // Increment attempts
           await prisma.scheduledEvent.update({
             where: { id: scheduledEvent.id },
-            data: { 
+            data: {
               attempts: { increment: 1 },
               status: scheduledEvent.attempts >= 2 ? 'failed' : 'pending'
             }

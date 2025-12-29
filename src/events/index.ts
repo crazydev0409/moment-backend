@@ -21,7 +21,7 @@ export async function initializeEventSystem(): Promise<{
 }> {
   try {
     console.log('[EventSystem] Initializing event system...');
-    
+
     // Create event bus based on configuration
     const eventBus = EventBusFactory.createFromEnvironment();
     await eventBus.connect();
@@ -55,7 +55,7 @@ export async function initializeEventSystem(): Promise<{
     await eventBus.subscribe(EventType.MOMENT_DELETED, wsHandler.handleEvent);
 
     // Removed DB-wide event storage; rely on broker retention (Kafka/EventHub)
-    
+
     // Subscribe database handler to store user notifications
     await eventBus.subscribe(EventType.MOMENT_REQUEST_CREATED, dbHandler.handleNotificationEvent);
     await eventBus.subscribe(EventType.MOMENT_REQUEST_APPROVED, dbHandler.handleNotificationEvent);
@@ -67,7 +67,7 @@ export async function initializeEventSystem(): Promise<{
     await eventBus.subscribe(EventType.MOMENT_DELETED, dbHandler.handleNotificationEvent);
 
     console.log('[EventSystem] Event system initialized successfully');
-    
+
     eventSystem = { eventBus, eventPublisher };
     return eventSystem;
   } catch (error) {
@@ -102,4 +102,4 @@ export async function shutdownEventSystem(): Promise<void> {
 export { EventPublisher } from './EventPublisher';
 export type { EventType, BaseEvent } from './types/Event';
 export type { EventBus } from './EventBus';
-export { UserDeviceRepository, TokenStatus } from '../repositories/UserDeviceRepository';
+export { UserDeviceRepository } from '../repositories/UserDeviceRepository';
