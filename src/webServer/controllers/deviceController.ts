@@ -13,6 +13,7 @@ const deviceRepo = new UserDeviceRepository();
 export const registerDevice: CustomRequestHandler = async (req, res) => {
   try {
     const { expoPushToken, deviceId, platform, appVersion, expoVersion, rememberMe } = req.body;
+    console.log({ expoPushToken, deviceId, platform, appVersion, expoVersion, rememberMe })
     const userId = req.user!.id;
 
     // Validate required fields
