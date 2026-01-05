@@ -103,7 +103,7 @@ export class UserDeviceRepository {
   }
 
   async getUserByDeviceId(deviceId: string): Promise<any | null> {
-    const device = await prisma.userDevice.findFirst({
+    const device = await prisma.userDevice.findMany({
       where: {
         deviceId,
         isActive: true,
@@ -111,10 +111,14 @@ export class UserDeviceRepository {
       },
       include: {
         user: true
-      }
+      },
+      orderBy: {
+        lastSeen: 'desc'
+      },
+      take: 1
     });
 
-    return device?.user || null;
+    return device[0]?.user || null;
   }
 
   async updateRememberMe(deviceId: string, userId: string, rememberMe: boolean): Promise<void> {
