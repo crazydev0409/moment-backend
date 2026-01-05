@@ -754,7 +754,13 @@ export class UserService {
    */
   async getContacts(ownerId: string): Promise<Contact[]> {
     const contacts = await prisma.contact.findMany({
-      where: { ownerId },
+      where: {
+        ownerId,
+        OR: [
+          { contactUserId: { not: ownerId } },
+          { contactUserId: null }
+        ]
+      },
       include: {
         contactUser: {
           select: {
@@ -1163,6 +1169,9 @@ export class UserService {
         ownerId,
         contactUserId: {
           not: null
+        },
+        NOT: {
+          contactUserId: ownerId
         }
       },
       include: {
