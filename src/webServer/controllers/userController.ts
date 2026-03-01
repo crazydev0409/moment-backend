@@ -390,9 +390,14 @@ export const getUserMomentRequests: CustomRequestHandler = async (req, res) => {
       userService.getSentMomentRequests(userId),
     ]);
 
-    // Only return approved/pending requests (not rejected)
+    // Return approved/pending requests as busy blocks.
+    // Also include rejected requests where the viewer was the original sender so
+    // that declined time slots appear as blocked on the sender's availability view.
     const allRequests = [...receivedRequests, ...sentRequests].filter(
-      (request: any) => request.status === 'approved' || request.status === 'pending'
+      (request: any) =>
+        request.status === 'approved' ||
+        request.status === 'pending' ||
+        (request.status === 'rejected' && request.senderId === requesterId)
     );
 
     return res.json({ requests: allRequests });

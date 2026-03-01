@@ -769,6 +769,9 @@ export class UserService {
             avatar: true
           }
         }
+      },
+      orderBy: {
+        displayName: 'asc'
       }
     });
 

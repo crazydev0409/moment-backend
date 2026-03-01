@@ -126,6 +126,7 @@ model UserDevice {
   platform              String
   deviceId              String
   appVersion            String
+  pushToken             String?
   isActive              Boolean  @default(true)
   rememberMe            Boolean  @default(false)
   lastSeen              DateTime @default(now())

@@ -1,6 +1,7 @@
 import { EventHandler, BaseEvent } from '../types/Event';
 import { UserDeviceRepository } from '../../repositories/UserDeviceRepository';
 import { EventType } from '../types/Event';
+import { Expo, ExpoPushMessage } from 'expo-server-sdk';
 
 interface PushNotification {
   title: string;
@@ -28,9 +29,42 @@ export class ExpoNotificationHandler {
   };
 
   async sendNotificationToUser(userId: string, notification: PushNotification): Promise<void> {
-    // Push notifications are currently disabled as we are not collecting Expo push tokens.
-    // This handler stays in place for future re-implementation or alternative notification channels.
-    return Promise.resolve();
+    const devices = await this.deviceRepo.getActivePushTokensForUser(userId);
+    if (devices.length === 0) return;
+
+    const expo = new Expo();
+
+    const messages: ExpoPushMessage[] = devices
+      .filter(device => device.pushToken && Expo.isExpoPushToken(device.pushToken))
+      .map(device => ({
+        to: device.pushToken!,
+        sound: 'default' as const,
+        title: notification.title,
+        body: notification.body,
+        data: notification.data,
+        ...(notification.data.categoryId ? { categoryId: notification.data.categoryId as string } : {}),
+      }));
+
+    if (messages.length === 0) return;
+
+    const chunks = expo.chunkPushNotifications(messages);
+    for (const chunk of chunks) {
+      try {
+        const receipts = await expo.sendPushNotificationsAsync(chunk);
+        receipts.forEach((receipt, i) => {
+          if (receipt.status === 'error') {
+            console.error(`Push notification error for token ${(chunk[i] as any).to}:`, receipt.message);
+            if (receipt.details?.error === 'DeviceNotRegistered') {
+              // Token is stale — mark device inactive so we stop sending to it
+              const token = (chunk[i] as any).to as string;
+              this.deviceRepo.deactivateDeviceByPushToken(token).catch(() => {});
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error sending push notification chunk:', error);
+      }
+    }
   }
 
   private mapEventToNotification(event: BaseEvent): PushNotification | null {

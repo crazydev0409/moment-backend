@@ -12,7 +12,7 @@ const deviceRepo = new UserDeviceRepository();
  */
 export const registerDevice: CustomRequestHandler = async (req, res) => {
   try {
-    const { deviceId, platform, appVersion, rememberMe } = req.body;
+    const { deviceId, platform, appVersion, rememberMe, pushToken } = req.body;
     const userId = req.user!.id;
 
     // Validate required fields
@@ -36,7 +36,8 @@ export const registerDevice: CustomRequestHandler = async (req, res) => {
       deviceId,
       platform,
       appVersion,
-      rememberMe: rememberMe || false
+      rememberMe: rememberMe || false,
+      ...(pushToken !== undefined ? { pushToken } : {})
     });
 
     res.json({

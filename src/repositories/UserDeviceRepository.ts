@@ -7,6 +7,7 @@ export interface UserDevice {
   platform: 'ios' | 'android';
   deviceId: string;
   appVersion: string;
+  pushToken?: string | null;
   isActive: boolean;
   rememberMe: boolean;
   lastSeen: Date;
@@ -35,6 +36,7 @@ export class UserDeviceRepository {
         data: {
           appVersion: deviceData.appVersion,
           rememberMe: deviceData.rememberMe !== undefined ? deviceData.rememberMe : existingDevice.rememberMe,
+          ...(deviceData.pushToken !== undefined ? { pushToken: deviceData.pushToken } : {}),
           lastSeen: now,
           isActive: true
         }
@@ -48,6 +50,7 @@ export class UserDeviceRepository {
           platform: deviceData.platform!,
           deviceId: deviceData.deviceId!,
           appVersion: deviceData.appVersion!,
+          pushToken: deviceData.pushToken || null,
           isActive: true,
           rememberMe: deviceData.rememberMe || false,
           lastSeen: now,
@@ -69,10 +72,30 @@ export class UserDeviceRepository {
     }) as UserDevice[];
   }
 
+  async getActivePushTokensForUser(userId: string): Promise<UserDevice[]> {
+    return await prisma.userDevice.findMany({
+      where: {
+        userId,
+        isActive: true,
+        pushToken: { not: null },
+        lastSeen: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Last 30 days
+        }
+      }
+    }) as UserDevice[];
+  }
+
   async deactivateDevice(deviceId: string, userId: string): Promise<void> {
     await prisma.userDevice.updateMany({
       where: { deviceId, userId },
       data: { isActive: false }
+    });
+  }
+
+  async deactivateDeviceByPushToken(pushToken: string): Promise<void> {
+    await prisma.userDevice.updateMany({
+      where: { pushToken },
+      data: { isActive: false, pushToken: null }
     });
   }
 
