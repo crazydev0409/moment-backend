@@ -42,6 +42,8 @@ export class ExpoNotificationHandler {
         title: notification.title,
         body: notification.body,
         data: notification.data,
+        priority: 'high' as const,        // Ensures delivery even in Doze mode on Android
+        channelId: 'default',             // Must match the channel created in the app
         ...(notification.data.categoryId ? { categoryId: notification.data.categoryId as string } : {}),
       }));
 
