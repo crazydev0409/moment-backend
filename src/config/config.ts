@@ -23,6 +23,14 @@ export const twilioVerifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID || '
 // --- JWT Secrets ---
 export const jwtSecret = process.env.JWT_SECRET || 'development_jwt_secret_at_least_32_chars_long';
 export const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || 'development_jwt_refresh_secret_at_least_32_chars';
+export const calendarEncryptionSecret =
+  process.env.CALENDAR_ENCRYPTION_SECRET || jwtSecret;
+export const googleOauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
+export const googleOauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
+export const microsoftOauthClientId = process.env.MICROSOFT_OAUTH_CLIENT_ID || '';
+export const microsoftOauthClientSecret = process.env.MICROSOFT_OAUTH_CLIENT_SECRET || '';
+export const microsoftOauthTenantId = process.env.MICROSOFT_OAUTH_TENANT_ID || 'common';
+export const appDeepLinkScheme = process.env.APP_DEEP_LINK_SCHEME || 'catch';
 
 // Only validate environment variables in production
 if (!isDevelopment) {
@@ -58,6 +66,11 @@ if (!isDevelopment) {
 
   if (!process.env.JWT_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET.length < 32) {
     console.error(`${ModuleName} Invalid or missing JWT_REFRESH_SECRET. It should be at least 32 characters long`);
+    process.exit(1);
+  }
+
+  if (!process.env.CALENDAR_ENCRYPTION_SECRET || process.env.CALENDAR_ENCRYPTION_SECRET.length < 32) {
+    console.error(`${ModuleName} Invalid or missing CALENDAR_ENCRYPTION_SECRET. It should be at least 32 characters long`);
     process.exit(1);
   }
 }

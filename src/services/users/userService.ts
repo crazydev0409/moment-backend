@@ -1,19 +1,52 @@
 import prisma from '../../services/prisma';
-import { User, Prisma } from '@prisma/client';
+import { User } from '@prisma/client';
 import { getEventSystem } from '../../events';
 import { hashPhoneNumber } from '../../utils/phoneHash';
 import { normalizePhoneNumber } from '../../utils/phoneUtils';
+import {
+  AvailabilityScheduleResponse,
+  AvailabilitySlotInput,
+  BookableUser,
+  CalendarEventSummary,
+} from '../../types/calendar';
 
-// Define types based on schema
-type WorkingHours = {
-  id: string;
-  userId: string;
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+const DEFAULT_WEEKDAY_SLOTS: AvailabilitySlotInput[] = [
+  { weekday: 0, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 1, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 2, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 3, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 4, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 5, startMinutes: 0, endMinutes: 24 * 60 },
+  { weekday: 6, startMinutes: 0, endMinutes: 24 * 60 },
+];
+
+const WEEKDAY_LABELS: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+const getDatePartsInTimezone = (date: Date, timezone: string) => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const weekday = WEEKDAY_LABELS[parts.find(part => part.type === 'weekday')?.value || 'Sun'] ?? 0;
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || '0');
+  const minute = Number(parts.find(part => part.type === 'minute')?.value || '0');
+
+  return {
+    weekday,
+    minutes: hour * 60 + minute,
+  };
 };
 
 
@@ -23,7 +56,15 @@ type MomentRequest = {
   receiverId: string;
   startTime: Date;
   endTime: Date;
+  title: string;
   notes: string | null;
+  description?: string | null;
+  meetingType?: string | null;
+  locationType?: string;
+  locationLabel?: string | null;
+  locationAddress?: string | null;
+  locationLatitude?: number | null;
+  locationLongitude?: number | null;
   status: string;
   createdAt: Date;
   updatedAt: Date;
@@ -118,6 +159,314 @@ export class UserService {
     });
   }
 
+  async getBookableUser(viewerId: string, targetUserId: string): Promise<BookableUser> {
+    if (viewerId === targetUserId) {
+      throw new Error('You cannot book a meeting with yourself');
+    }
+
+    const blocked = await this.isUserBlocked(viewerId, targetUserId);
+    if (blocked) {
+      throw new Error('You do not have permission to book this user');
+    }
+
+    const [targetUser, contact] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: {
+          id: true,
+          name: true,
+          avatar: true,
+          timezone: true,
+          phoneNumber: true,
+        },
+      }),
+      prisma.contact.findFirst({
+        where: {
+          ownerId: viewerId,
+          contactUserId: targetUserId,
+        },
+        select: {
+          id: true,
+          displayName: true,
+        },
+      }),
+    ]);
+
+    if (!targetUser) {
+      throw new Error('Bookable user not found');
+    }
+
+    return {
+      id: targetUser.id,
+      displayName: contact?.displayName || targetUser.name || 'Catch user',
+      avatar: targetUser.avatar,
+      isContact: Boolean(contact),
+      timezone: targetUser.timezone || 'UTC',
+    };
+  }
+
+  async getAvailabilitySchedule(userId: string): Promise<AvailabilityScheduleResponse> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        timezone: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const slots = await prisma.availabilitySlot.findMany({
+      where: { userId },
+      orderBy: [
+        { weekday: 'asc' },
+        { startMinutes: 'asc' },
+      ],
+    });
+
+    return {
+      timezone: user.timezone || 'UTC',
+      slots: slots.length > 0
+        ? slots.map(slot => ({
+            weekday: slot.weekday,
+            startMinutes: slot.startMinutes,
+            endMinutes: slot.endMinutes,
+          }))
+        : DEFAULT_WEEKDAY_SLOTS,
+    };
+  }
+
+  async updateAvailabilitySchedule(
+    userId: string,
+    data: AvailabilityScheduleResponse,
+  ): Promise<AvailabilityScheduleResponse> {
+    const timezone = data.timezone || 'UTC';
+
+    // Sort and validate individual slot ranges
+    const sortedSlots = [...data.slots]
+      .sort((a, b) => (a.weekday - b.weekday) || (a.startMinutes - b.startMinutes));
+
+    for (const slot of sortedSlots) {
+      if (
+        slot.weekday < 0 ||
+        slot.weekday > 6 ||
+        slot.startMinutes < 0 ||
+        slot.endMinutes > 24 * 60 ||
+        slot.startMinutes >= slot.endMinutes
+      ) {
+        throw new Error('Availability slots must have valid weekday and time ranges');
+      }
+    }
+
+    // Merge overlapping/adjacent slots on the same weekday
+    const uniqueSlots: AvailabilitySlotInput[] = [];
+    for (const slot of sortedSlots) {
+      const previous = uniqueSlots[uniqueSlots.length - 1];
+      if (
+        previous &&
+        previous.weekday === slot.weekday &&
+        previous.endMinutes >= slot.startMinutes
+      ) {
+        previous.endMinutes = Math.max(previous.endMinutes, slot.endMinutes);
+      } else {
+        uniqueSlots.push({
+          weekday: slot.weekday,
+          startMinutes: slot.startMinutes,
+          endMinutes: slot.endMinutes,
+        });
+      }
+    }
+
+    if (uniqueSlots.length === 0) {
+      throw new Error('At least one availability slot is required');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { timezone },
+      });
+
+      await tx.availabilitySlot.deleteMany({
+        where: { userId },
+      });
+
+      if (uniqueSlots.length > 0) {
+        await tx.availabilitySlot.createMany({
+          data: uniqueSlots.map(slot => ({
+            userId,
+            weekday: slot.weekday,
+            startMinutes: slot.startMinutes,
+            endMinutes: slot.endMinutes,
+            timezone,
+          })),
+        });
+      }
+    });
+
+    return {
+      timezone,
+      slots: uniqueSlots,
+    };
+  }
+
+  async getCalendarEventsForUser(
+    userId: string,
+    viewerId: string,
+    rangeStart: Date,
+    rangeEnd: Date,
+  ): Promise<CalendarEventSummary[]> {
+    const isOwnerView = viewerId === userId;
+    const [requests, externalEvents] = await Promise.all([
+      prisma.momentRequest.findMany({
+        where: {
+          OR: [
+            { senderId: userId },
+            { receiverId: userId },
+          ],
+          startTime: { lt: rangeEnd },
+          endTime: { gt: rangeStart },
+        },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          receiver: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: { startTime: 'asc' },
+      }),
+      prisma.externalCalendarEvent.findMany({
+        where: {
+          integration: {
+            userId,
+          },
+          startTime: { lt: rangeEnd },
+          endTime: { gt: rangeStart },
+        },
+        include: {
+          integration: {
+            select: {
+              provider: true,
+            },
+          },
+        },
+        orderBy: { startTime: 'asc' },
+      }),
+    ]);
+
+    const visibleInternalEvents = requests.filter((request) => {
+      if (viewerId === userId) {
+        return true;
+      }
+
+      return (
+        request.status === 'approved' ||
+        request.status === 'pending' ||
+        (request.status === 'rejected' && request.senderId === viewerId)
+      );
+    });
+
+    const internalEvents: CalendarEventSummary[] = visibleInternalEvents.map((request) => ({
+      id: request.id,
+      source: 'catch',
+      sourceType: 'internal',
+      title: isOwnerView ? request.title : 'Busy',
+      description: isOwnerView ? request.notes || request.description || null : null,
+      startTime: request.startTime.toISOString(),
+      endTime: request.endTime.toISOString(),
+      status: isOwnerView ? request.status : undefined,
+      meetingType: isOwnerView ? request.meetingType : undefined,
+      locationType: isOwnerView ? request.locationType : undefined,
+      locationLabel: isOwnerView ? request.locationLabel : null,
+      locationAddress: isOwnerView ? request.locationAddress : null,
+      locationLatitude: isOwnerView ? request.locationLatitude : null,
+      locationLongitude: isOwnerView ? request.locationLongitude : null,
+      compact: false,
+    }));
+
+    const mappedExternalEvents: CalendarEventSummary[] = externalEvents.map((event) => ({
+      id: event.id,
+      source: event.integration.provider as CalendarEventSummary['source'],
+      sourceType: 'external',
+      title: isOwnerView ? event.title : 'Busy',
+      description: isOwnerView ? event.description : null,
+      startTime: event.startTime.toISOString(),
+      endTime: event.endTime.toISOString(),
+      locationType: isOwnerView ? (event.location ? 'onsite' : 'remote') : undefined,
+      locationLabel: isOwnerView ? event.sourceCalendarName : null,
+      locationAddress: isOwnerView ? event.location : null,
+      compact: true,
+    }));
+
+    return [...internalEvents, ...mappedExternalEvents].sort((a, b) =>
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+    );
+  }
+
+  async validateMeetingSchedule(
+    userId: string,
+    startTime: Date,
+    endTime: Date,
+    excludeRequestId?: string,
+  ): Promise<void> {
+    const schedule = await this.getAvailabilitySchedule(userId);
+    const startParts = getDatePartsInTimezone(startTime, schedule.timezone);
+    const endParts = getDatePartsInTimezone(endTime, schedule.timezone);
+
+    const slotForRange = schedule.slots.find((slot) =>
+      slot.weekday === startParts.weekday &&
+      slot.weekday === endParts.weekday &&
+      slot.startMinutes <= startParts.minutes &&
+      slot.endMinutes >= endParts.minutes,
+    );
+
+    if (!slotForRange) {
+      throw new Error('Selected time is outside the user availability');
+    }
+
+    const conflicts = await prisma.momentRequest.findFirst({
+      where: {
+        id: excludeRequestId ? { not: excludeRequestId } : undefined,
+        OR: [
+          { senderId: userId },
+          { receiverId: userId },
+        ],
+        status: {
+          in: ['pending', 'approved'],
+        },
+        startTime: { lt: endTime },
+        endTime: { gt: startTime },
+      },
+    });
+
+    if (conflicts) {
+      throw new Error('Selected time conflicts with an existing Catch meeting');
+    }
+
+    const externalConflict = await prisma.externalCalendarEvent.findFirst({
+      where: {
+        integration: {
+          userId,
+        },
+        startTime: { lt: endTime },
+        endTime: { gt: startTime },
+      },
+    });
+
+    if (externalConflict) {
+      throw new Error('Selected time conflicts with a connected calendar event');
+    }
+  }
+
   /**
    * Delete a user's account
    */
@@ -142,10 +491,20 @@ export class UserService {
     data: {
       startTime: Date;
       endTime: Date;
+      title: string;
       notes?: string;
       meetingType?: string;
+      locationType?: 'remote' | 'onsite';
+      locationLabel?: string;
+      locationAddress?: string;
+      locationLatitude?: number;
+      locationLongitude?: number;
     }
   ): Promise<MomentRequest> {
+    if (senderId === receiverId) {
+      throw new Error('You cannot create a meeting with yourself');
+    }
+
     // Check if users exist
     const sender = await prisma.user.findUnique({ where: { id: senderId } });
     const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
@@ -154,6 +513,11 @@ export class UserService {
       throw new Error('One or both users do not exist');
     }
 
+    if (data.startTime >= data.endTime) {
+      throw new Error('Start time must be before end time');
+    }
+
+    await this.validateMeetingSchedule(receiverId, data.startTime, data.endTime);
 
     const request = await prisma.momentRequest.create({
       data: {
@@ -161,9 +525,14 @@ export class UserService {
         receiverId,
         startTime: data.startTime,
         endTime: data.endTime,
-        title: data.notes || 'Moment Request',
+        title: data.title,
         notes: data.notes || null,
         meetingType: data.meetingType || 'meet',
+        locationType: data.locationType || 'remote',
+        locationLabel: data.locationLabel || null,
+        locationAddress: data.locationAddress || null,
+        locationLatitude: data.locationLatitude ?? null,
+        locationLongitude: data.locationLongitude ?? null,
         status: 'pending'
       }
     });
@@ -177,7 +546,7 @@ export class UserService {
         receiverId,
         {
           senderName: sender.name || 'User',
-          title: data.notes || 'New Moment Request',
+          title: data.title || data.notes || 'New Moment Request',
           startTime: data.startTime,
           endTime: data.endTime,
           notes: data.notes
@@ -279,36 +648,7 @@ export class UserService {
 
     // If approved, create moments for both users
     if (approved) {
-      // Check for time conflicts for receiver
-      const conflictingMoments = await prisma.moment.findFirst({
-        where: {
-          userId: receiverId,
-          OR: [
-            {
-              AND: [
-                { startTime: { lte: request.startTime } },
-                { endTime: { gt: request.startTime } }
-              ]
-            },
-            {
-              AND: [
-                { startTime: { lt: request.endTime } },
-                { endTime: { gte: request.endTime } }
-              ]
-            },
-            {
-              AND: [
-                { startTime: { gte: request.startTime } },
-                { endTime: { lte: request.endTime } }
-              ]
-            }
-          ]
-        }
-      });
-
-      if (conflictingMoments) {
-        throw new Error('Cannot approve due to a calendar conflict');
-      }
+      await this.validateMeetingSchedule(receiverId, request.startTime, request.endTime, requestId);
 
       // Get both users' information to use in moment notes
       const receiver = await prisma.user.findUnique({ where: { id: receiverId } });

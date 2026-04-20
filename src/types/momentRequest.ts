@@ -6,6 +6,12 @@ export interface MomentRequest {
   endTime: Date;
   title: string;
   description: string | null;
+  meetingType?: string | null;
+  locationType?: string;
+  locationLabel?: string | null;
+  locationAddress?: string | null;
+  locationLatitude?: number | null;
+  locationLongitude?: number | null;
   status: 'pending' | 'approved' | 'rejected' | 'rescheduled';
   createdAt: Date;
   updatedAt: Date;

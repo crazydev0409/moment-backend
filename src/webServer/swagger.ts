@@ -150,7 +150,7 @@ const momentRequestSchema: Schema = {
 export const swaggerDocument = {
   openapi: '3.0.0',
   info: {
-    title: 'Moment APIsss',
+    title: 'Moment api????',
     version: '1.0.0',
     description: 'API for managing user authentication, calendars, and moments'
   },

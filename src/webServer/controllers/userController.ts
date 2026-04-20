@@ -291,13 +291,45 @@ export const syncContacts: CustomRequestHandler = async (req, res) => {
 export const createMomentRequest: CustomRequestHandler = async (req, res) => {
   try {
     const senderId = req.user!.id;
-    const { receiverId, startTime, endTime, title, description, meetingType } = req.body;
+    const {
+      receiverId,
+      startTime,
+      endTime,
+      title,
+      description,
+      meetingType,
+      locationType,
+      locationLabel,
+      locationAddress,
+      locationLatitude,
+      locationLongitude,
+    } = req.body;
 
     // Validate required fields
     if (!receiverId || !startTime || !endTime || !title) {
       return res.status(400).json({
         error: 'Receiver ID, start time, end time, and title are required'
       });
+    }
+
+    if (locationType && !['remote', 'onsite'].includes(locationType)) {
+      return res.status(400).json({ error: 'locationType must be either remote or onsite' });
+    }
+
+    const parsedLatitude =
+      locationLatitude !== undefined && locationLatitude !== null
+        ? Number(locationLatitude)
+        : undefined;
+    const parsedLongitude =
+      locationLongitude !== undefined && locationLongitude !== null
+        ? Number(locationLongitude)
+        : undefined;
+
+    if (
+      (parsedLatitude !== undefined && Number.isNaN(parsedLatitude)) ||
+      (parsedLongitude !== undefined && Number.isNaN(parsedLongitude))
+    ) {
+      return res.status(400).json({ error: 'Location coordinates must be valid numbers' });
     }
 
     try {
@@ -307,8 +339,14 @@ export const createMomentRequest: CustomRequestHandler = async (req, res) => {
       const request = await userService.createMomentRequest(senderId, receiverId, {
         startTime: new Date(startTime),
         endTime: new Date(endTime),
+        title,
         notes,
-        meetingType: meetingType || 'meet'
+        meetingType: meetingType || 'meet',
+        locationType: locationType || 'remote',
+        locationLabel,
+        locationAddress,
+        locationLatitude: parsedLatitude,
+        locationLongitude: parsedLongitude,
       });
 
       return res.json({

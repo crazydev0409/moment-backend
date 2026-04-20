@@ -1,11 +1,18 @@
 import express from 'express';
 import * as userController from '../controllers/userController';
+import * as calendarController from '../controllers/calendarController';
 import { authenticate } from '../sso';
 import { asHandler } from '../../types/express';
 
 const router = express.Router();
 
-// Apply JWT authentication to all user routes
+// OAuth callbacks must remain public because they are invoked by provider redirects
+router.get(
+  '/calendar-integrations/:provider/callback',
+  asHandler(calendarController.handleCalendarOAuthCallback),
+);
+
+// Apply JWT authentication to all remaining user routes
 router.use(authenticate);
 
 // User profile routes
@@ -17,6 +24,21 @@ router.delete('/account', asHandler(userController.deleteAccount));
 router.get('/contacts', asHandler(userController.getContacts));
 router.post('/contacts/import', asHandler(userController.importContacts));
 router.post('/contacts/sync', asHandler(userController.syncContacts));
+
+// Calendar integration routes
+router.get('/calendar-integrations', asHandler(calendarController.listCalendarIntegrations));
+router.post('/calendar-integrations/:provider/start', asHandler(calendarController.startCalendarOAuth));
+router.post('/calendar-integrations/icloud/connect', asHandler(calendarController.connectIcloudIntegration));
+router.post('/calendar-integrations/:provider/sync', asHandler(calendarController.syncCalendarIntegration));
+router.delete('/calendar-integrations/:provider', asHandler(calendarController.disconnectCalendarIntegration));
+
+// Bookable profiles, availability, and merged calendar events
+router.get('/bookable/:userId', asHandler(calendarController.getBookableUser));
+router.get('/availability', asHandler(calendarController.getAvailability));
+router.get('/:userId/availability', asHandler(calendarController.getUserAvailability));
+router.put('/availability', asHandler(calendarController.updateAvailability));
+router.get('/calendar-events', asHandler(calendarController.getMyCalendarEvents));
+router.get('/:userId/calendar-events', asHandler(calendarController.getUserCalendarEvents));
 
 
 // Moment request routes
