@@ -16,6 +16,7 @@ import { CalendarProvider } from '../../types/calendar';
 type OAuthStatePayload = {
   userId: string;
   provider: Extract<CalendarProvider, 'google' | 'microsoft'>;
+  mobileRedirectUri?: string;
 };
 
 type ProviderTokens = {
@@ -199,6 +200,7 @@ export class CalendarIntegrationService {
     provider: CalendarProvider,
     status: 'success' | 'error',
     errorMessage?: string,
+    mobileRedirectUri?: string,
   ): string {
     const params = new URLSearchParams({
       provider,
@@ -209,7 +211,11 @@ export class CalendarIntegrationService {
       params.set('message', errorMessage);
     }
 
-    return `${appDeepLinkScheme}://calendar-integration?${params.toString()}`;
+    // Use the mobile redirect URI from the OAuth state if available (e.g. exp:// in dev mode),
+    // otherwise fall back to the native deep link scheme (catch://)
+    const baseUri = mobileRedirectUri || `${appDeepLinkScheme}://calendar-integration`;
+    const separator = baseUri.includes('?') ? '&' : '?';
+    return `${baseUri}${separator}${params.toString()}`;
   }
 
   private buildOAuthState(payload: OAuthStatePayload): string {
@@ -590,6 +596,7 @@ export class CalendarIntegrationService {
     userId: string,
     providerInput: string,
     baseUrl: string,
+    mobileRedirectUri?: string,
   ) {
     const provider = assertProvider(providerInput);
     if (provider === 'icloud') {
@@ -607,6 +614,7 @@ export class CalendarIntegrationService {
     const state = this.buildOAuthState({
       userId,
       provider,
+      mobileRedirectUri,
     });
     const redirectUri = this.getBackendRedirectUri(baseUrl, provider);
 
@@ -703,7 +711,7 @@ export class CalendarIntegrationService {
       });
 
       await this.syncIntegration(payload.userId, provider);
-      return this.getMobileRedirectUrl(provider, 'success');
+      return this.getMobileRedirectUrl(provider, 'success', undefined, payload.mobileRedirectUri);
     }
 
     const tokens = await fetchJson<{
@@ -738,7 +746,7 @@ export class CalendarIntegrationService {
     });
 
     await this.syncIntegration(payload.userId, provider);
-    return this.getMobileRedirectUrl(provider, 'success');
+    return this.getMobileRedirectUrl(provider, 'success', undefined, payload.mobileRedirectUri);
   }
 
   async connectIcloud(

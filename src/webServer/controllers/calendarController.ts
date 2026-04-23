@@ -53,10 +53,12 @@ export const listCalendarIntegrations: CustomRequestHandler = async (req, res) =
 export const startCalendarOAuth: CustomRequestHandler = async (req, res) => {
   try {
     const { provider } = req.params;
+    const { redirectUri: mobileRedirectUri } = req.body;
     const data = await calendarIntegrationService.getAuthorizationUrl(
       req.user!.id,
       provider,
       buildBaseUrl(req),
+      mobileRedirectUri,
     );
 
     return res.json(data);
