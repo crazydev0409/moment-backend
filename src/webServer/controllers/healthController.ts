@@ -43,11 +43,18 @@ export const healthCheck: CustomRequestHandler = async (req, res) => {
   try {
     // Check Twilio connectivity
     try {
-      await twilioClient.verify.v2.services(twilioVerifyServiceSid).fetch();
-      healthcheck.dependencies.twilio = {
-        status: 'connected',
-        error: null
-      };
+      if (!twilioClient) {
+        healthcheck.dependencies.twilio = {
+          status: 'unknown',
+          error: null
+        };
+      } else {
+        await twilioClient.verify.v2.services(twilioVerifyServiceSid).fetch();
+        healthcheck.dependencies.twilio = {
+          status: 'connected',
+          error: null
+        };
+      }
     } catch (twilioError: any) {
       healthcheck.status = 'error';
       healthcheck.dependencies.twilio = {

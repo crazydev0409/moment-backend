@@ -55,7 +55,7 @@ describe('Health Check Endpoint', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // Reset the mock implementation
-    const mockServices = twilioClient.verify.v2.services as unknown as jest.Mock;
+    const mockServices = twilioClient!.verify.v2.services as unknown as jest.Mock;
     mockServices.mockReturnValue({
       fetch: jest.fn().mockResolvedValue({})
     });
@@ -90,13 +90,13 @@ describe('Health Check Endpoint', () => {
     expect(typeof response.body.details.memory.percentage).toBe('number');
 
     // Verify Twilio client was called correctly
-    expect(twilioClient.verify.v2.services).toHaveBeenCalledWith(twilioVerifyServiceSid);
+    expect(twilioClient!.verify.v2.services).toHaveBeenCalledWith(twilioVerifyServiceSid);
   });
 
   it('should return 503 when Twilio is not available', async () => {
     // Mock Twilio error
     const mockError = new Error('Twilio service unavailable');
-    const mockServices = twilioClient.verify.v2.services as unknown as jest.Mock;
+    const mockServices = twilioClient!.verify.v2.services as unknown as jest.Mock;
     mockServices.mockReturnValue({
       fetch: jest.fn().mockRejectedValue(mockError)
     });
@@ -115,6 +115,6 @@ describe('Health Check Endpoint', () => {
     });
 
     // Verify Twilio client was called correctly
-    expect(twilioClient.verify.v2.services).toHaveBeenCalledWith(twilioVerifyServiceSid);
+    expect(twilioClient!.verify.v2.services).toHaveBeenCalledWith(twilioVerifyServiceSid);
   });
 });

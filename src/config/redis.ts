@@ -7,7 +7,13 @@ const ModuleName = '[redis]';
 let redisOptions: RedisOptions = {
   maxRetriesPerRequest: 3,
   enableOfflineQueue: true,
+  connectTimeout: 5000,
+  lazyConnect: !process.env.REDIS_URL && !process.env.REDIS_HOST,
   retryStrategy: (times) => {
+    if (!process.env.REDIS_URL && !process.env.REDIS_HOST) {
+      console.log(`${ModuleName} No Redis configured, stopping retries`);
+      return null;
+    }
     const delay = Math.min(times * 50, 2000);
     console.log(`${ModuleName} Redis connection retry in ${delay}ms`);
     return delay;
