@@ -4,6 +4,7 @@ import momentRoutes from './momentRoutes';
 import healthRoutes from './healthRoutes';
 import userRoutes from './userRoutes';
 import deviceRoutes from './deviceRoutes';
+import hookRoutes from './hookRoutes';
 import testRoutes from './testRoutes';
 
 const router = Router();
@@ -14,6 +15,7 @@ router.use('/moments', momentRoutes);
 router.use('/health', healthRoutes);
 router.use('/users', userRoutes);
 router.use('/devices', deviceRoutes);
+router.use('/hooks', hookRoutes);
 router.use('/test', testRoutes);
 
 export default router;

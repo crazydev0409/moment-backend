@@ -21,6 +21,8 @@ model User {
   birthday         DateTime?
   timezone         String           @default("UTC")
   meetingTypes     String[]         @default([])
+  // Account type: "user" | "verified" | "business" | "agent". Drives badges + Mesh visibility.
+  accountType      String           @default("user")
   blockedBy        BlockedContact[] @relation("Blocked")
   blockedUsers     BlockedContact[] @relation("Blocker")
   contactOf        Contact[]        @relation("ContactUser")
@@ -33,6 +35,8 @@ model User {
   devices          UserDevice[]
   availabilitySlots AvailabilitySlot[]
   calendarIntegrations CalendarIntegration[]
+  hooks            Hook[]             @relation("UserHooks")
+  hookParticipations HookParticipant[] @relation("HookParticipations")
 }
 
 model Moment {
@@ -66,6 +70,7 @@ model Contact {
   contactUserId String?
   contactPhone  String
   displayName   String
+  autoConfirm   Boolean  @default(false)
   updatedAt     DateTime @updatedAt
   importedAt    DateTime @default(now())
   phoneBookId   String?
@@ -95,9 +100,14 @@ model MomentRequest {
   updatedAt   DateTime @updatedAt
   momentId    Int?     @unique
   notes       String?
+  // Optional source hook this request was created from (meetings are grouped by hook).
+  hookId      String?
   moment      Moment?  @relation(fields: [momentId], references: [id])
+  hook        Hook?    @relation(fields: [hookId], references: [id])
   receiver    User     @relation("RequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
   sender      User     @relation("RequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([hookId])
 }
 
 model BlockedContact {
@@ -228,4 +238,94 @@ model ExternalCalendarEvent {
 
   @@unique([integrationId, providerEventId])
   @@index([startTime, endTime])
+}
+
+/// A Hook is the universal scheduling primitive: a reusable template that can
+/// represent a meeting, a service, or a listing. Booking flows, Mesh services
+/// and paid slots are all built on top of hooks.
+model Hook {
+  id                String   @id @default(uuid())
+  ownerId           String
+  title             String
+  description       String?
+  /// Emoji or icon key shown on the hook card.
+  icon              String?
+  /// Human label / meeting type, e.g. "Coffee", "Consultation", "Haircut".
+  meetingType       String?
+  /// Backend/data-science grouping only (Services/Work/Life ...). NOT shown as a UI group.
+  category          String?
+  /// Access level (see design "Access"): "personal" (only you) | "shared"
+  /// (chosen invitees; accepted invitees get the hook in their own My Hooks)
+  /// | "private" (direct-share only; not discoverable, not added to others'
+  /// My Hooks) | "open" (discoverable by anyone who can access your hooks).
+  accessLevel       String   @default("personal")
+  /// Lifecycle state: "active" | "paused".
+  state             String   @default("active")
+  /// "remote" | "in_person". in_person reveals the location fields below.
+  locationType      String   @default("remote")
+  locationLabel     String?
+  locationAddress   String?
+  locationLatitude  Float?
+  locationLongitude Float?
+  /// Default meeting duration in minutes for bookings created from this hook.
+  durationMinutes   Int      @default(30)
+  /// Optional max number of participants (e.g. seminars/group hooks). null = unlimited/1-1.
+  capacity          Int?
+  isPaid            Boolean  @default(false)
+  /// Price in minor units (cents) when isPaid is true.
+  priceCents        Int?
+  currency          String   @default("USD")
+  /// Whether this hook is published to Mesh (only allowed for business accounts).
+  publishedToMesh   Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  owner             User                   @relation("UserHooks", fields: [ownerId], references: [id], onDelete: Cascade)
+  participants      HookParticipant[]
+  availabilitySlots HookAvailabilitySlot[]
+  momentRequests    MomentRequest[]
+
+  @@index([ownerId])
+  @@index([accessLevel, state])
+  @@index([publishedToMesh])
+}
+
+/// Per-hook weekly availability (one row per weekday). Mirrors the global
+/// AvailabilitySlot but scoped to a hook, with per-day available/pause toggles
+/// to match the "Set availability" sheet.
+model HookAvailabilitySlot {
+  id           String   @id @default(cuid())
+  hookId       String
+  /// 0 = Sunday ... 6 = Saturday.
+  weekday      Int
+  startMinutes Int      @default(540)
+  endMinutes   Int      @default(1020)
+  isAvailable  Boolean  @default(true)
+  isPaused     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  hook         Hook     @relation(fields: [hookId], references: [id], onDelete: Cascade)
+
+  @@unique([hookId, weekday])
+  @@index([hookId])
+}
+
+/// Participants attached to a hook. For "shared" hooks, an invited contact who
+/// accepts gets the hook surfaced in their own My Hooks. Supports non-app
+/// contacts via contactPhone for invitations.
+model HookParticipant {
+  id           String   @id @default(cuid())
+  hookId       String
+  userId       String?
+  contactPhone String?
+  displayName  String?
+  /// "invited" | "accepted" | "declined".
+  status       String   @default("invited")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  hook         Hook     @relation(fields: [hookId], references: [id], onDelete: Cascade)
+  user         User?    @relation("HookParticipations", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([hookId, userId])
+  @@index([userId, status])
+  @@index([hookId])
 }

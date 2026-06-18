@@ -31,6 +31,7 @@ export const getCurrentUser: CustomRequestHandler = async (req, res) => {
       birthday: (user as any).birthday,
       meetingTypes: (user as any).meetingTypes || [],
       verified: user.verified,
+      accountType: (user as any).accountType || 'user',
       createdAt: user.createdAt
     });
   } catch (error) {
@@ -190,6 +191,32 @@ export const updateContact: CustomRequestHandler = async (req, res) => {
     }
   } catch (error) {
     console.error('Error updating contact:', error);
+    return res.status(500).json({ error: 'Failed to update contact' });
+  }
+};
+
+export const patchContact: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { autoConfirm, displayName } = req.body;
+
+    if (!id) return res.status(400).json({ error: 'Contact ID is required' });
+
+    const existing = await prisma.contact.findFirst({ where: { id, ownerId: userId } });
+    if (!existing) return res.status(404).json({ error: 'Contact not found' });
+
+    const updated = await prisma.contact.update({
+      where: { id },
+      data: {
+        ...(typeof autoConfirm === 'boolean' && { autoConfirm }),
+        ...(displayName !== undefined && { displayName }),
+      },
+    });
+
+    return res.json({ contact: updated });
+  } catch (error) {
+    console.error('Error patching contact:', error);
     return res.status(500).json({ error: 'Failed to update contact' });
   }
 };

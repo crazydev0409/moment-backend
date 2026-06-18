@@ -24,6 +24,7 @@ router.delete('/account', asHandler(userController.deleteAccount));
 router.get('/contacts', asHandler(userController.getContacts));
 router.post('/contacts/import', asHandler(userController.importContacts));
 router.post('/contacts/sync', asHandler(userController.syncContacts));
+router.patch('/contacts/:id', asHandler(userController.patchContact));
 
 // Calendar integration routes
 router.get('/calendar-integrations', asHandler(calendarController.listCalendarIntegrations));
