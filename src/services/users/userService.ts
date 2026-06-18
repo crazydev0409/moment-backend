@@ -418,21 +418,6 @@ export class UserService {
     endTime: Date,
     excludeRequestId?: string,
   ): Promise<void> {
-    const schedule = await this.getAvailabilitySchedule(userId);
-    const startParts = getDatePartsInTimezone(startTime, schedule.timezone);
-    const endParts = getDatePartsInTimezone(endTime, schedule.timezone);
-
-    const slotForRange = schedule.slots.find((slot) =>
-      slot.weekday === startParts.weekday &&
-      slot.weekday === endParts.weekday &&
-      slot.startMinutes <= startParts.minutes &&
-      slot.endMinutes >= endParts.minutes,
-    );
-
-    if (!slotForRange) {
-      throw new Error('Selected time is outside the user availability');
-    }
-
     const conflicts = await prisma.momentRequest.findFirst({
       where: {
         id: excludeRequestId ? { not: excludeRequestId } : undefined,
@@ -784,18 +769,18 @@ export class UserService {
    */
   async rescheduleMomentRequest(
     requestId: string,
-    receiverId: string,
+    userId: string,
     newSchedule: {
       startTime: Date;
       endTime: Date;
       note?: string;
     }
   ): Promise<MomentRequest> {
-    // Find the original request
+    // Allow both sender and receiver to reschedule
     const originalRequest = await prisma.momentRequest.findFirst({
       where: {
         id: requestId,
-        receiverId
+        OR: [{ senderId: userId }, { receiverId: userId }]
       }
     });
 
@@ -807,57 +792,88 @@ export class UserService {
       throw new Error('Only pending requests can be rescheduled');
     }
 
-    // Validate the new times
     if (newSchedule.startTime >= newSchedule.endTime) {
       throw new Error('Start time must be before end time');
     }
 
-    // Mark the original request as "rescheduled" (a special kind of rejected status)
-    await prisma.momentRequest.update({
-      where: { id: requestId },
-      data: {
-        status: 'rescheduled'
-      }
-    });
+    const isSender = originalRequest.senderId === userId;
 
-    // Create a new request from the receiver to the original sender
-    // (reversing the roles, as the recipient is now suggesting a new time)
-    const newRequest = await prisma.momentRequest.create({
-      data: {
-        senderId: receiverId, // Current receiver becomes the sender
-        receiverId: originalRequest.senderId, // Original sender becomes the receiver
-        startTime: newSchedule.startTime,
-        endTime: newSchedule.endTime,
-        title: newSchedule.note || 'Rescheduled Request',
-        notes: newSchedule.note || null,
-        status: 'pending'
-      }
-    });
-
-    // Publish reschedule event to notify the original sender
-    try {
-      const { eventPublisher } = getEventSystem();
-      const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
-      await eventPublisher.publishMomentRequestCreated(
-        newRequest.id,
-        receiverId,
-        originalRequest.senderId,
-        {
-          senderName: receiver?.name || receiver?.phoneNumber || 'User',
-          title: newSchedule.note || 'Rescheduled Request',
+    if (isSender) {
+      // Organizer updating their own request — update in place
+      const updatedRequest = await prisma.momentRequest.update({
+        where: { id: requestId },
+        data: {
           startTime: newSchedule.startTime,
           endTime: newSchedule.endTime,
-          notes: newSchedule.note,
-          isReschedule: true,
-          originalRequestId: requestId
+          notes: newSchedule.note || originalRequest.notes,
         }
-      );
-    } catch (error) {
-      console.error('Failed to publish reschedule event:', error);
-      // Don't fail the reschedule if event publishing fails
-    }
+      });
 
-    return newRequest;
+      // Notify the receiver about the updated time
+      try {
+        const { eventPublisher } = getEventSystem();
+        const sender = await prisma.user.findUnique({ where: { id: userId } });
+        await eventPublisher.publishMomentRequestCreated(
+          updatedRequest.id,
+          userId,
+          originalRequest.receiverId,
+          {
+            senderName: sender?.name || sender?.phoneNumber || 'User',
+            title: newSchedule.note || originalRequest.title || 'Rescheduled Request',
+            startTime: newSchedule.startTime,
+            endTime: newSchedule.endTime,
+            notes: newSchedule.note,
+            isReschedule: true,
+            originalRequestId: requestId
+          }
+        );
+      } catch (error) {
+        console.error('Failed to publish reschedule event:', error);
+      }
+
+      return updatedRequest;
+    } else {
+      // Receiver proposing a counter-time — mark original rescheduled, create new request
+      await prisma.momentRequest.update({
+        where: { id: requestId },
+        data: { status: 'rescheduled' }
+      });
+
+      const newRequest = await prisma.momentRequest.create({
+        data: {
+          senderId: userId,
+          receiverId: originalRequest.senderId,
+          startTime: newSchedule.startTime,
+          endTime: newSchedule.endTime,
+          title: newSchedule.note || originalRequest.title || 'Rescheduled Request',
+          notes: newSchedule.note || null,
+          status: 'pending'
+        }
+      });
+
+      try {
+        const { eventPublisher } = getEventSystem();
+        const receiver = await prisma.user.findUnique({ where: { id: userId } });
+        await eventPublisher.publishMomentRequestCreated(
+          newRequest.id,
+          userId,
+          originalRequest.senderId,
+          {
+            senderName: receiver?.name || receiver?.phoneNumber || 'User',
+            title: newSchedule.note || originalRequest.title || 'Rescheduled Request',
+            startTime: newSchedule.startTime,
+            endTime: newSchedule.endTime,
+            notes: newSchedule.note,
+            isReschedule: true,
+            originalRequestId: requestId
+          }
+        );
+      } catch (error) {
+        console.error('Failed to publish reschedule event:', error);
+      }
+
+      return newRequest;
+    }
   }
 
   /**

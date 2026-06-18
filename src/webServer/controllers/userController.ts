@@ -513,7 +513,7 @@ export const respondToMomentRequest: CustomRequestHandler = async (req, res) => 
  */
 export const rescheduleMomentRequest: CustomRequestHandler = async (req, res) => {
   try {
-    const receiverId = req.user!.id;
+    const userId = req.user!.id;
     const { requestId } = req.params;
     const { startTime, endTime, note } = req.body;
 
@@ -525,7 +525,7 @@ export const rescheduleMomentRequest: CustomRequestHandler = async (req, res) =>
     }
 
     try {
-      const newRequest = await userService.rescheduleMomentRequest(requestId, receiverId, {
+      const newRequest = await userService.rescheduleMomentRequest(requestId, userId, {
         startTime: new Date(startTime),
         endTime: new Date(endTime),
         note
