@@ -1,6 +1,6 @@
 import { RequestHandler as _RequestHandler } from 'express';
 import * as jwt from 'jsonwebtoken';
-import { jwtSecret, jwtRefreshSecret } from '../../config/config';
+import { jwtSecret, jwtRefreshSecret, demoPhoneNumber, demoOtpCode } from '../../config/config';
 import { verifyPhoneNumber, checkVerification } from '../../services/twilio';
 import { validatePhoneNumber } from '../../utils/validation';
 import { hashPhoneNumber } from '../../utils/phoneHash';
@@ -70,6 +70,10 @@ export const generateOtp: CustomRequestHandler = async (req, res) => {
       });
     }
 
+    if (phoneNumber === demoPhoneNumber) {
+      return res.json({ message: 'OTP sent successfully', status: 'pending', expiresIn: 600 });
+    }
+
     const verification = await verifyPhoneNumber(phoneNumber);
     return res.json({
       message: 'OTP sent successfully',
@@ -106,7 +110,9 @@ export const verify: CustomRequestHandler = async (req, res) => {
       return res.status(400).json({ error: 'Phone number and verification code are required' });
     }
 
-
+    if (phoneNumber === demoPhoneNumber && code === demoOtpCode) {
+      return res.status(200).json({ message: 'Phone number verified successfully' });
+    }
 
     try {
       // Check verification code with Twilio Verify

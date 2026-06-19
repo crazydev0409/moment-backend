@@ -32,6 +32,12 @@ export const microsoftOauthClientSecret = process.env.MICROSOFT_OAUTH_CLIENT_SEC
 export const microsoftOauthTenantId = process.env.MICROSOFT_OAUTH_TENANT_ID || 'common';
 export const appDeepLinkScheme = process.env.APP_DEEP_LINK_SCHEME || 'catch';
 
+// --- Demo / Review Account ---
+// Used to let Google Play / App Store reviewers bypass phone OTP.
+// Set DEMO_PHONE_NUMBER and DEMO_OTP_CODE in env; defaults target a non-dialable test number.
+export const demoPhoneNumber = process.env.DEMO_PHONE_NUMBER || '+15005550006';
+export const demoOtpCode = process.env.DEMO_OTP_CODE || '000000';
+
 // Only validate environment variables in production
 if (!isDevelopment) {
   // Validate required environment variables
