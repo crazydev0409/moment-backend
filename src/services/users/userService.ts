@@ -1526,12 +1526,9 @@ export class UserService {
     return prisma.contact.findMany({
       where: {
         ownerId,
-        contactUserId: {
-          not: null
-        },
-        NOT: {
-          contactUserId: ownerId
-        }
+        contactUserId: { not: null },
+        NOT: { contactUserId: ownerId },
+        contactUser: { verified: true },
       },
       include: {
         contactUser: {
