@@ -535,7 +535,7 @@ export const removeParticipant: CustomRequestHandler = async (req, res) => {
 
 /**
  * View another user's OPEN hooks (for the booking flow / contact profile).
- * Only active, open hooks are returned; respects blocking.
+ * Returns active open hooks plus shared/private hooks where the viewer is a participant; respects blocking.
  */
 export const getUserOpenHooks: CustomRequestHandler = async (req, res) => {
   try {
@@ -560,16 +560,36 @@ export const getUserOpenHooks: CustomRequestHandler = async (req, res) => {
       return res.status(403).json({ error: "You do not have permission to view this user's hooks" });
     }
 
-    const hooks = await prisma.hook.findMany({
-      where: { ownerId: userId, accessLevel: 'open', state: 'active' },
-      include: hookInclude,
-      orderBy: { updatedAt: 'desc' }
+    const [openHooks, sharedHooks] = await Promise.all([
+      prisma.hook.findMany({
+        where: { ownerId: userId, accessLevel: 'open', state: 'active' },
+        include: hookInclude,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      // Shared/private hooks owned by the target user where the viewer is a participant
+      prisma.hook.findMany({
+        where: {
+          ownerId: userId,
+          accessLevel: { in: ['shared', 'private'] },
+          state: 'active',
+          participants: { some: { userId: viewerId, status: { in: ['accepted', 'invited'] } } },
+        },
+        include: hookInclude,
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const seen = new Set<string>();
+    const hooks = [...openHooks, ...sharedHooks].filter((h) => {
+      if (seen.has(h.id)) return false;
+      seen.add(h.id);
+      return true;
     });
 
     return res.json({
       userId: user.id,
       name: user.name,
-      hooks: hooks.map((h) => shapeHook(h, viewerId))
+      hooks: hooks.map((h) => shapeHook(h, viewerId)),
     });
   } catch (error) {
     console.error('Error getting user open hooks:', error);
