@@ -63,6 +63,7 @@ router.post('/', asHandler(hookController.createHook));
  *       403: { description: Blocked }
  *       404: { description: User not found }
  */
+router.get('/mesh', asHandler(hookController.getMeshHooks));
 router.get('/user/:userId', asHandler(hookController.getUserOpenHooks));
 
 /**

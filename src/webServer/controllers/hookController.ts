@@ -576,3 +576,43 @@ export const getUserOpenHooks: CustomRequestHandler = async (req, res) => {
     return res.status(500).json({ error: 'Failed to get user hooks' });
   }
 };
+
+/**
+ * List all hooks published to Mesh (business discovery feed).
+ * Returns active hooks with publishedToMesh=true, supports ?search= and ?locationType=.
+ */
+export const getMeshHooks: CustomRequestHandler = async (req, res) => {
+  try {
+    const viewerId = req.user!.id;
+    const { search, locationType } = req.query as Record<string, string | undefined>;
+
+    const where: Prisma.HookWhereInput = {
+      publishedToMesh: true,
+      state: 'active',
+    };
+
+    if (locationType && LOCATION_TYPES.includes(locationType as typeof LOCATION_TYPES[number])) {
+      where.locationType = locationType as 'remote' | 'in_person';
+    }
+
+    if (search?.trim()) {
+      where.OR = [
+        { title: { contains: search.trim(), mode: 'insensitive' } },
+        { description: { contains: search.trim(), mode: 'insensitive' } },
+        { owner: { name: { contains: search.trim(), mode: 'insensitive' } } },
+      ];
+    }
+
+    const hooks = await prisma.hook.findMany({
+      where,
+      include: hookInclude,
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+
+    return res.json({ hooks: hooks.map((h) => shapeHook(h, viewerId)) });
+  } catch (error) {
+    console.error('Error fetching mesh hooks:', error);
+    return res.status(500).json({ error: 'Failed to fetch mesh hooks' });
+  }
+};
