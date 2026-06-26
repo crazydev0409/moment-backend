@@ -330,6 +330,7 @@ export const createMomentRequest: CustomRequestHandler = async (req, res) => {
       locationAddress,
       locationLatitude,
       locationLongitude,
+      hookId,
     } = req.body;
 
     // Validate required fields
@@ -374,7 +375,16 @@ export const createMomentRequest: CustomRequestHandler = async (req, res) => {
         locationAddress,
         locationLatitude: parsedLatitude,
         locationLongitude: parsedLongitude,
+        hookId: hookId || null,
       });
+
+      // Private hooks are one-time use — auto-delete after catch is sent.
+      if (hookId) {
+        const hook = await prisma.hook.findUnique({ where: { id: hookId, ownerId: senderId }, select: { accessLevel: true } });
+        if (hook?.accessLevel === 'private') {
+          await prisma.hook.delete({ where: { id: hookId } });
+        }
+      }
 
       return res.json({
         message: 'Moment request created successfully',
@@ -846,7 +856,7 @@ export const sendTestNotification: CustomRequestHandler = async (req, res) => {
 export const createMomentRequestMultiple: CustomRequestHandler = async (req, res) => {
   try {
     const senderId = req.user!.id;
-    const { receiverIds, startTime, endTime, title, description } = req.body;
+    const { receiverIds, startTime, endTime, title, description, hookId } = req.body;
 
     // Validate required fields
     if (!receiverIds || !Array.isArray(receiverIds) || receiverIds.length === 0) {
@@ -872,6 +882,14 @@ export const createMomentRequestMultiple: CustomRequestHandler = async (req, res
           description
         }
       );
+
+      // Private hooks are one-time use — auto-delete after catch is sent.
+      if (hookId && result.successful.length > 0) {
+        const hook = await prisma.hook.findUnique({ where: { id: hookId, ownerId: senderId }, select: { accessLevel: true } });
+        if (hook?.accessLevel === 'private') {
+          await prisma.hook.delete({ where: { id: hookId } });
+        }
+      }
 
       return res.json({
         message: 'Moment requests created successfully',

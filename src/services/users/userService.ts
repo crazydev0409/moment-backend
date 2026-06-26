@@ -484,6 +484,7 @@ export class UserService {
       locationAddress?: string;
       locationLatitude?: number;
       locationLongitude?: number;
+      hookId?: string | null;
     }
   ): Promise<MomentRequest> {
     if (senderId === receiverId) {
@@ -518,6 +519,7 @@ export class UserService {
         locationAddress: data.locationAddress || null,
         locationLatitude: data.locationLatitude ?? null,
         locationLongitude: data.locationLongitude ?? null,
+        hookId: data.hookId ?? null,
         status: 'pending'
       }
     });

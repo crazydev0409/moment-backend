@@ -256,8 +256,8 @@ model Hook {
   category          String?
   /// Access level (see design "Access"): "personal" (only you) | "shared"
   /// (chosen invitees; accepted invitees get the hook in their own My Hooks)
-  /// | "private" (direct-share only; not discoverable, not added to others'
-  /// My Hooks) | "open" (discoverable by anyone who can access your hooks).
+  /// | "private" (one-time use; auto-deleted after the first catch is sent from it)
+  /// | "open" (discoverable by anyone who can access your hooks).
   accessLevel       String   @default("personal")
   /// Lifecycle state: "active" | "paused".
   state             String   @default("active")
