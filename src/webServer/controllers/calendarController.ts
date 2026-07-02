@@ -1,5 +1,5 @@
 import { CustomRequestHandler } from '../../types/express';
-import { CalendarIntegrationService } from '../../services/calendar/calendarIntegrationService';
+import { CalendarIntegrationService, CalendarReauthRequiredError } from '../../services/calendar/calendarIntegrationService';
 import { UserService } from '../../services/users/userService';
 
 const calendarIntegrationService = new CalendarIntegrationService();
@@ -145,6 +145,9 @@ export const syncCalendarIntegration: CustomRequestHandler = async (req, res) =>
     });
   } catch (error) {
     console.error('Error syncing calendar integration:', error);
+    if (error instanceof CalendarReauthRequiredError) {
+      return res.status(409).json({ error: error.message, code: 'RECONNECT_REQUIRED' });
+    }
     return res.status(400).json({
       error: error instanceof Error ? error.message : 'Failed to sync calendar',
     });

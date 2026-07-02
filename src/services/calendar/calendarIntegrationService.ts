@@ -56,6 +56,25 @@ const OAUTH_PROVIDERS: CalendarProvider[] = ['google', 'microsoft', 'icloud'];
 const SYNC_LOOKBACK_DAYS = 30;
 const SYNC_LOOKAHEAD_DAYS = 180;
 
+/**
+ * Thrown when a provider's refresh token is no longer valid (e.g. it was revoked
+ * because the user signed into a different device/session). Callers should surface
+ * this as a prompt to reconnect rather than a raw sync failure.
+ */
+export class CalendarReauthRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CalendarReauthRequiredError';
+  }
+}
+
+class ProviderTokenError extends Error {
+  constructor(message: string, public readonly providerErrorCode?: string) {
+    super(message);
+    this.name = 'ProviderTokenError';
+  }
+}
+
 function assertProvider(provider: string): CalendarProvider {
   if (!OAUTH_PROVIDERS.includes(provider as CalendarProvider)) {
     throw new Error('Unsupported calendar provider');
@@ -191,6 +210,28 @@ async function fetchJson<T>(
   return text ? (JSON.parse(text) as T) : ({} as T);
 }
 
+/** Like fetchJson, but for OAuth token endpoints: parses `{ error, error_description }`
+ * bodies so callers can branch on the provider's error code instead of raw text. */
+async function fetchTokenJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const text = await response.text();
+
+  if (!response.ok) {
+    let parsed: { error?: string; error_description?: string } | null = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      // Non-JSON error body; fall through with raw text below.
+    }
+    throw new ProviderTokenError(
+      parsed?.error_description || parsed?.error || text || `Request failed with status ${response.status}`,
+      parsed?.error,
+    );
+  }
+
+  return text ? (JSON.parse(text) as T) : ({} as T);
+}
+
 export class CalendarIntegrationService {
   private getBackendRedirectUri(baseUrl: string, provider: Extract<CalendarProvider, 'google' | 'microsoft'>): string {
     return `${baseUrl}/api/users/calendar-integrations/${provider}/callback`;
@@ -278,59 +319,82 @@ export class CalendarIntegrationService {
     return decrypted?.refreshToken || null;
   }
 
-  private async refreshGoogleAccessToken(refreshToken: string): Promise<ProviderTokens> {
-    const response = await fetchJson<{
-      access_token: string;
-      refresh_token?: string;
-      expires_in?: number;
-    }>('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        client_id: googleOauthClientId,
-        client_secret: googleOauthClientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-      }),
-    });
+  /**
+   * OAuth token endpoints return `invalid_grant` when a refresh token has been revoked or
+   * expired — most commonly because the user signed into the same Google/Microsoft account
+   * on a different device/session. Translate that into a friendly, actionable error instead
+   * of letting the provider's raw error JSON bubble up to the client.
+   */
+  private wrapProviderTokenError(error: unknown, providerLabel: string): never {
+    if (error instanceof ProviderTokenError && error.providerErrorCode === 'invalid_grant') {
+      throw new CalendarReauthRequiredError(
+        `Your ${providerLabel} connection has expired. Please reconnect it to keep syncing.`,
+      );
+    }
+    throw error;
+  }
 
-    return {
-      accessToken: response.access_token,
-      refreshToken: response.refresh_token || refreshToken,
-      expiresAt: response.expires_in
-        ? new Date(Date.now() + response.expires_in * 1000)
-        : null,
-    };
+  private async refreshGoogleAccessToken(refreshToken: string): Promise<ProviderTokens> {
+    try {
+      const response = await fetchTokenJson<{
+        access_token: string;
+        refresh_token?: string;
+        expires_in?: number;
+      }>('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: googleOauthClientId,
+          client_secret: googleOauthClientSecret,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        }),
+      });
+
+      return {
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token || refreshToken,
+        expiresAt: response.expires_in
+          ? new Date(Date.now() + response.expires_in * 1000)
+          : null,
+      };
+    } catch (error) {
+      this.wrapProviderTokenError(error, 'Google Calendar');
+    }
   }
 
   private async refreshMicrosoftAccessToken(refreshToken: string): Promise<ProviderTokens> {
-    const response = await fetchJson<{
-      access_token: string;
-      refresh_token?: string;
-      expires_in?: number;
-    }>(`https://login.microsoftonline.com/${microsoftOauthTenantId}/oauth2/v2.0/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        client_id: microsoftOauthClientId,
-        client_secret: microsoftOauthClientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-        scope: 'offline_access openid profile email User.Read Calendars.Read',
-      }),
-    });
+    try {
+      const response = await fetchTokenJson<{
+        access_token: string;
+        refresh_token?: string;
+        expires_in?: number;
+      }>(`https://login.microsoftonline.com/${microsoftOauthTenantId}/oauth2/v2.0/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: microsoftOauthClientId,
+          client_secret: microsoftOauthClientSecret,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+          scope: 'offline_access openid profile email User.Read Calendars.Read',
+        }),
+      });
 
-    return {
-      accessToken: response.access_token,
-      refreshToken: response.refresh_token || refreshToken,
-      expiresAt: response.expires_in
-        ? new Date(Date.now() + response.expires_in * 1000)
-        : null,
-    };
+      return {
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token || refreshToken,
+        expiresAt: response.expires_in
+          ? new Date(Date.now() + response.expires_in * 1000)
+          : null,
+      };
+    } catch (error) {
+      this.wrapProviderTokenError(error, 'Outlook Calendar');
+    }
   }
 
   private async getFreshAccessToken(integration: {
@@ -356,13 +420,32 @@ export class CalendarIntegrationService {
         return access.accessToken;
       }
 
-      throw new Error('Calendar integration requires reconnection');
+      throw new CalendarReauthRequiredError('This calendar needs to be reconnected.');
     }
 
-    const refreshed =
-      integration.provider === 'google'
-        ? await this.refreshGoogleAccessToken(refresh.refreshToken)
-        : await this.refreshMicrosoftAccessToken(refresh.refreshToken);
+    let refreshed: ProviderTokens;
+    try {
+      refreshed =
+        integration.provider === 'google'
+          ? await this.refreshGoogleAccessToken(refresh.refreshToken)
+          : await this.refreshMicrosoftAccessToken(refresh.refreshToken);
+    } catch (error) {
+      if (error instanceof CalendarReauthRequiredError) {
+        // The stored refresh token is dead (commonly because the user signed into this
+        // account on another device/session). Clear it and flag for reconnection so the
+        // integration stops silently failing sync on every attempt.
+        await prisma.calendarIntegration.update({
+          where: { id: integration.id },
+          data: {
+            status: 'reconnect_required',
+            encryptedAccessToken: null,
+            encryptedRefreshToken: null,
+            tokenExpiresAt: null,
+          },
+        });
+      }
+      throw error;
+    }
 
     await prisma.calendarIntegration.update({
       where: { id: integration.id },
@@ -559,7 +642,7 @@ export class CalendarIntegrationService {
   private async markSyncResult(
     integrationId: string,
     data: {
-      status: 'connected' | 'error';
+      status: 'connected' | 'error' | 'reconnect_required';
       error?: string | null;
     },
   ) {
@@ -843,7 +926,7 @@ export class CalendarIntegrationService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Calendar sync failed';
       await this.markSyncResult(integration.id, {
-        status: 'error',
+        status: error instanceof CalendarReauthRequiredError ? 'reconnect_required' : 'error',
         error: message,
       });
       throw error;
