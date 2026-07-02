@@ -199,7 +199,7 @@ export const refreshToken: CustomRequestHandler = async (req, res) => {
         }
       });
 
-      if (!storedToken || storedToken.expiresAt < new Date()) {
+      if (!storedToken || storedToken.expiresAt < new Date() || storedToken.user.deletedAt) {
         return res.status(401).json({ error: 'Invalid refresh token' });
       }
 

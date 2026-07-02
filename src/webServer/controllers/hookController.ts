@@ -1,6 +1,9 @@
 import prisma from '../../services/prisma';
 import { CustomRequestHandler } from '../../types/express';
 import { Prisma } from '@prisma/client';
+import { UserService } from '../../services/users/userService';
+
+const userService = new UserService();
 
 /**
  * Hook controller
@@ -560,12 +563,19 @@ export const getUserOpenHooks: CustomRequestHandler = async (req, res) => {
       return res.status(403).json({ error: "You do not have permission to view this user's hooks" });
     }
 
+    // General discovery ("open" hooks) respects the owner's profile visibility. Hooks
+    // already shared directly with this viewer (below) are an explicit invite and stay
+    // visible regardless — that's a separate, narrower grant.
+    const canDiscover = viewerId === userId || await userService.isProfileVisibleTo(viewerId, userId);
+
     const [openHooks, sharedHooks] = await Promise.all([
-      prisma.hook.findMany({
-        where: { ownerId: userId, accessLevel: 'open', state: 'active' },
-        include: hookInclude,
-        orderBy: { updatedAt: 'desc' },
-      }),
+      canDiscover
+        ? prisma.hook.findMany({
+            where: { ownerId: userId, accessLevel: 'open', state: 'active' },
+            include: hookInclude,
+            orderBy: { updatedAt: 'desc' },
+          })
+        : Promise.resolve([]),
       // Shared/private hooks owned by the target user where the viewer is a participant
       prisma.hook.findMany({
         where: {

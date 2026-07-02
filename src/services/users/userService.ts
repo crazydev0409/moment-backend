@@ -142,6 +142,7 @@ export class UserService {
       email?: string | null;
       birthday?: Date | null;
       meetingTypes?: string[] | null;
+      profileVisibility?: string;
     }
   ): Promise<User> {
     return prisma.user.update({
@@ -154,6 +155,7 @@ export class UserService {
         email: data.email ?? undefined,
         birthday: data.birthday ?? undefined,
         meetingTypes: data.meetingTypes ?? undefined,
+        profileVisibility: data.profileVisibility,
         verified: true
       }
     });
@@ -178,6 +180,8 @@ export class UserService {
           avatar: true,
           timezone: true,
           phoneNumber: true,
+          deletedAt: true,
+          profileVisibility: true,
         },
       }),
       prisma.contact.findFirst({
@@ -196,6 +200,15 @@ export class UserService {
       throw new Error('Bookable user not found');
     }
 
+    if (targetUser.deletedAt) {
+      throw new Error('This user has deleted their account and can no longer be booked');
+    }
+
+    const visibility = targetUser.profileVisibility || 'public';
+    if (visibility === 'only_me' || (visibility === 'contacts' && !contact)) {
+      throw new Error('This user is not available to book');
+    }
+
     return {
       id: targetUser.id,
       displayName: contact?.displayName || targetUser.name || 'Catch user',
@@ -205,16 +218,31 @@ export class UserService {
     };
   }
 
-  async getAvailabilitySchedule(userId: string): Promise<AvailabilityScheduleResponse> {
+  async getAvailabilitySchedule(userId: string, viewerId: string = userId): Promise<AvailabilityScheduleResponse> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         timezone: true,
+        deletedAt: true,
+        profileVisibility: true,
       },
     });
 
     if (!user) {
       throw new Error('User not found');
+    }
+
+    if (user.deletedAt) {
+      // Deleted accounts have no slots of their own; don't fall back to the
+      // "no slots configured yet" default, which would show them as fully open.
+      return { timezone: user.timezone || 'UTC', slots: [] };
+    }
+
+    if (viewerId !== userId) {
+      const visible = await this.isProfileVisibleTo(viewerId, userId);
+      if (!visible) {
+        throw new Error('This user\'s availability is not visible to you');
+      }
     }
 
     const slots = await prisma.availabilitySlot.findMany({
@@ -318,6 +346,14 @@ export class UserService {
     rangeEnd: Date,
   ): Promise<CalendarEventSummary[]> {
     const isOwnerView = viewerId === userId;
+
+    if (!isOwnerView) {
+      const visible = await this.isProfileVisibleTo(viewerId, userId);
+      if (!visible) {
+        throw new Error('This user\'s calendar is not visible to you');
+      }
+    }
+
     const [requests, externalEvents] = await Promise.all([
       prisma.momentRequest.findMany({
         where: {
@@ -453,13 +489,63 @@ export class UserService {
   }
 
   /**
-   * Delete a user's account
+   * Delete a user's account.
+   *
+   * This is a soft delete, not a row delete: the User row is kept and anonymized so
+   * that other users' contacts, moment history, and moment requests keep resolving
+   * instead of breaking or silently reverting to "unregistered" state. Only the
+   * deleted user's own private data (sessions, devices, calendar sync, notifications,
+   * contact book, blocks, availability, and any hooks they host) is actually removed.
+   * Matches the Telegram/Slack model: the account shows up everywhere it already
+   * appeared as "Deleted Account" instead of vanishing.
    */
   async deleteUser(userId: string): Promise<void> {
-    // This will cascade delete related records
-    await prisma.user.delete({
-      where: { id: userId }
-    });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    await prisma.$transaction([
+      // The deleted user can no longer respond, so don't leave the other party waiting.
+      prisma.momentRequest.updateMany({
+        where: {
+          status: 'pending',
+          OR: [{ senderId: userId }, { receiverId: userId }],
+        },
+        data: { status: 'rejected' },
+      }),
+      // Hooks are forward-looking booking pages; they can't be honored without an
+      // owner. Deleting them cascades their availability slots and participants.
+      prisma.hook.deleteMany({ where: { ownerId: userId } }),
+      // Private session/device/sync data.
+      prisma.refreshToken.deleteMany({ where: { userId } }),
+      prisma.userDevice.deleteMany({ where: { userId } }),
+      prisma.notification.deleteMany({ where: { userId } }),
+      prisma.calendarIntegration.deleteMany({ where: { userId } }),
+      prisma.availabilitySlot.deleteMany({ where: { userId } }),
+      prisma.contact.deleteMany({ where: { ownerId: userId } }),
+      prisma.blockedContact.deleteMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+      }),
+      // Anonymize the account itself. phoneNumber/email are tombstoned so the real
+      // values are freed up for a fresh signup later (that creates a brand new
+      // account, same as re-registering on Telegram after deleting).
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: 'Deleted Account',
+          avatar: null,
+          bio: null,
+          birthday: null,
+          email: null,
+          phoneNumber: `deleted:${userId}`,
+          verified: false,
+          accountType: 'deleted',
+          meetingTypes: [],
+          deletedAt: new Date(),
+        },
+      }),
+    ]);
   }
 
   /**
@@ -497,6 +583,20 @@ export class UserService {
 
     if (!sender || !receiver) {
       throw new Error('One or both users do not exist');
+    }
+
+    if (receiver.deletedAt) {
+      throw new Error('This user has deleted their account and can no longer be booked');
+    }
+
+    // A hook link is its own explicit invitation (open/shared/personal access is already
+    // scoped at the hook level), so it bypasses the receiver's general profile visibility.
+    // Direct booking (no hookId) must respect it.
+    if (!data.hookId) {
+      const visible = await this.isProfileVisibleTo(senderId, receiverId);
+      if (!visible) {
+        throw new Error('This user is not available to book');
+      }
     }
 
     if (data.startTime >= data.endTime) {
@@ -1334,6 +1434,44 @@ export class UserService {
   }
 
   /**
+   * Whether `viewerId` is allowed to see `targetUserId`'s profile, calendar, and
+   * availability, per the target's `profileVisibility` setting:
+   *   - "public": anyone
+   *   - "contacts": only people who have the target saved as a contact
+   *   - "only_me": nobody but the target themselves
+   */
+  async isProfileVisibleTo(viewerId: string, targetUserId: string): Promise<boolean> {
+    if (viewerId === targetUserId) {
+      return true;
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { profileVisibility: true },
+    });
+
+    if (!target) {
+      return false;
+    }
+
+    const visibility = target.profileVisibility || 'public';
+
+    if (visibility === 'only_me') {
+      return false;
+    }
+
+    if (visibility === 'contacts') {
+      const contact = await prisma.contact.findFirst({
+        where: { ownerId: viewerId, contactUserId: targetUserId },
+        select: { id: true },
+      });
+      return Boolean(contact);
+    }
+
+    return true;
+  }
+
+  /**
    * Get all blocked users
    */
   async getBlockedUsers(userId: string): Promise<{
@@ -1445,7 +1583,13 @@ export class UserService {
           where: { id: receiverId }
         });
 
-        if (!receiver) {
+        if (!receiver || receiver.deletedAt) {
+          failed.push(receiverId);
+          continue;
+        }
+
+        const isVisible = await this.isProfileVisibleTo(senderId, receiverId);
+        if (!isVisible) {
           failed.push(receiverId);
           continue;
         }

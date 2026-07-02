@@ -32,6 +32,7 @@ export const getCurrentUser: CustomRequestHandler = async (req, res) => {
       meetingTypes: (user as any).meetingTypes || [],
       verified: user.verified,
       accountType: (user as any).accountType || 'user',
+      profileVisibility: (user as any).profileVisibility || 'public',
       createdAt: user.createdAt
     });
   } catch (error) {
@@ -43,10 +44,12 @@ export const getCurrentUser: CustomRequestHandler = async (req, res) => {
 /**
  * Update the current user's profile
  */
+const VALID_PROFILE_VISIBILITIES = ['public', 'contacts', 'only_me'];
+
 export const updateProfile: CustomRequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
-    const { name, avatar, timezone, bio, email, birthday, meetingTypes } = req.body;
+    const { name, avatar, timezone, bio, email, birthday, meetingTypes, profileVisibility } = req.body;
 
     // Validate timezone if provided
     if (timezone) {
@@ -55,6 +58,10 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
       } catch (e) {
         return res.status(400).json({ error: 'Invalid timezone' });
       }
+    }
+
+    if (profileVisibility !== undefined && !VALID_PROFILE_VISIBILITIES.includes(profileVisibility)) {
+      return res.status(400).json({ error: 'Invalid profile visibility. Must be public, contacts, or only_me' });
     }
 
     // Parse birthday if provided
@@ -88,7 +95,8 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
       bio,
       email,
       birthday: parsedBirthday,
-      meetingTypes: meetingTypes ?? undefined
+      meetingTypes: meetingTypes ?? undefined,
+      profileVisibility: profileVisibility ?? undefined
     });
 
     return res.json({
@@ -104,6 +112,7 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
         birthday: (updatedUser as any).birthday,
         meetingTypes: (updatedUser as any).meetingTypes || [],
         verified: updatedUser.verified,
+        profileVisibility: (updatedUser as any).profileVisibility || 'public',
         createdAt: updatedUser.createdAt
       }
     });
@@ -457,6 +466,18 @@ export const getUserMomentRequests: CustomRequestHandler = async (req, res) => {
 
     if (!userId) {
       return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    if (userId !== requesterId) {
+      const blocked = await userService.isUserBlocked(requesterId, userId);
+      if (blocked) {
+        return res.status(403).json({ error: 'You do not have permission to view this schedule' });
+      }
+
+      const visible = await userService.isProfileVisibleTo(requesterId, userId);
+      if (!visible) {
+        return res.status(403).json({ error: 'This profile is private' });
+      }
     }
 
     // Get both received and sent requests for the target user

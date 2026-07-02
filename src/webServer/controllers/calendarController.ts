@@ -206,9 +206,14 @@ export const getUserAvailability: CustomRequestHandler = async (req, res) => {
       if (blocked) {
         return res.status(403).json({ error: 'You do not have permission to view this availability' });
       }
+
+      const visible = await userService.isProfileVisibleTo(req.user!.id, userId);
+      if (!visible) {
+        return res.status(403).json({ error: 'This profile is private' });
+      }
     }
 
-    const schedule = await userService.getAvailabilitySchedule(userId);
+    const schedule = await userService.getAvailabilitySchedule(userId, req.user!.id);
     return res.json(schedule);
   } catch (error) {
     console.error('Error getting user availability schedule:', error);
@@ -279,6 +284,18 @@ export const getUserCalendarEvents: CustomRequestHandler = async (req, res) => {
     const { userId } = req.params;
     if (!userId) {
       return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    if (userId !== req.user!.id) {
+      const blocked = await userService.isUserBlocked(req.user!.id, userId);
+      if (blocked) {
+        return res.status(403).json({ error: 'You do not have permission to view this calendar' });
+      }
+
+      const visible = await userService.isProfileVisibleTo(req.user!.id, userId);
+      if (!visible) {
+        return res.status(403).json({ error: 'This profile is private' });
+      }
     }
 
     const { start, end } = parseRange(req.query as Record<string, unknown>);

@@ -21,8 +21,14 @@ model User {
   birthday         DateTime?
   timezone         String           @default("UTC")
   meetingTypes     String[]         @default([])
-  // Account type: "user" | "verified" | "business" | "agent". Drives badges + Mesh visibility.
+  // Account type: "user" | "verified" | "business" | "agent" | "deleted". Drives badges + Mesh visibility.
   accountType      String           @default("user")
+  // Set when the user deletes their account. The row is kept (not hard-deleted) so
+  // contacts, moments, and moment requests other users hold onto still resolve —
+  // they just see an anonymized "Deleted Account" instead of a dangling reference.
+  deletedAt        DateTime?
+  // Who can view this profile / book time / see the calendar: "public" | "contacts" | "only_me".
+  profileVisibility String          @default("public")
   blockedBy        BlockedContact[] @relation("Blocked")
   blockedUsers     BlockedContact[] @relation("Blocker")
   contactOf        Contact[]        @relation("ContactUser")
