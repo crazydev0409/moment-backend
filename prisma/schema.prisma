@@ -29,6 +29,13 @@ model User {
   deletedAt        DateTime?
   // Who can view this profile / book time / see the calendar: "public" | "contacts" | "only_me".
   profileVisibility String          @default("public")
+  // Stripe Customer (for saving/charging cards as a payer).
+  stripeCustomerId String?          @unique
+  // Stripe Connect Express account (for receiving payouts as a paid-Hook host).
+  stripeConnectAccountId         String?  @unique
+  stripeConnectChargesEnabled    Boolean  @default(false)
+  stripeConnectPayoutsEnabled    Boolean  @default(false)
+  stripeConnectDetailsSubmitted  Boolean  @default(false)
   blockedBy        BlockedContact[] @relation("Blocked")
   blockedUsers     BlockedContact[] @relation("Blocker")
   contactOf        Contact[]        @relation("ContactUser")
@@ -43,6 +50,23 @@ model User {
   calendarIntegrations CalendarIntegration[]
   hooks            Hook[]             @relation("UserHooks")
   hookParticipations HookParticipant[] @relation("HookParticipations")
+  pendingEmailChange PendingEmailChange?
+  paymentsMade     Payment[]          @relation("PaymentsMade")
+  paymentsReceived Payment[]          @relation("PaymentsReceived")
+}
+
+/// Tracks an in-flight "change your email" request: the candidate email plus a
+/// hashed verification code. Phone-number changes don't need an equivalent table —
+/// Twilio Verify already holds that state for us.
+model PendingEmailChange {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  newEmail  String
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Moment {
@@ -112,8 +136,39 @@ model MomentRequest {
   hook        Hook?    @relation(fields: [hookId], references: [id])
   receiver    User     @relation("RequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
   sender      User     @relation("RequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  payment     Payment?
 
   @@index([hookId])
+}
+
+/// One row per paid-Hook booking. Stripe is the source of truth for the money
+/// movement itself (PaymentIntent/Charge/Transfer) — this table is booking-level
+/// history + the state machine driving capture/cancel from the moment-request
+/// approve/reject flow.
+model Payment {
+  id                    String    @id @default(cuid())
+  momentRequestId       String    @unique
+  payerId               String
+  payeeId               String
+  amountCents           Int
+  applicationFeeCents   Int       @default(0)
+  currency              String    @default("USD")
+  /// "requires_payment" | "authorized" | "captured" | "canceled" | "failed" | "refunded"
+  status                String    @default("requires_payment")
+  stripePaymentIntentId String    @unique
+  stripeChargeId        String?
+  stripeTransferId      String?
+  failureReason         String?
+  capturedAt            DateTime?
+  canceledAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  momentRequest MomentRequest @relation(fields: [momentRequestId], references: [id], onDelete: Cascade)
+  payer         User          @relation("PaymentsMade", fields: [payerId], references: [id])
+  payee         User          @relation("PaymentsReceived", fields: [payeeId], references: [id])
+
+  @@index([payeeId, status])
+  @@index([payerId, status])
 }
 
 model BlockedContact {

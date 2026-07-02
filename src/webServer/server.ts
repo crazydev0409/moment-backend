@@ -3,6 +3,7 @@ import swaggerUi from 'swagger-ui-express';
 import { swaggerDocument } from './swagger';
 import passport from './auth/passport';
 import routes from './routes';
+import paymentWebhookRoutes from './routes/paymentWebhookRoutes';
 import http from 'http';
 import { initializeEventSystem, shutdownEventSystem } from '../events';
 import { MaintenanceScheduler } from '../jobs/MaintenanceScheduler';
@@ -16,6 +17,14 @@ const server = http.createServer(app);
 
 // Global instances
 let maintenanceScheduler: MaintenanceScheduler | null = null;
+
+// Stripe webhook signature verification needs the raw, unparsed request body.
+// This MUST be registered before the global express.json() below, and at the
+// exact literal path Stripe is configured to POST to (dashboard webhook URL:
+// https://moment-backend.azurewebsites.net/api/payments/webhook) — it's
+// mounted directly on `app` rather than nested under routes/index.ts so it
+// can get express.raw() instead of express.json().
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentWebhookRoutes);
 
 // Middleware
 app.use(express.json());

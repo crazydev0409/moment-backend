@@ -1,14 +1,24 @@
+import crypto from 'crypto';
 import prisma from '../../services/prisma';
 import { User } from '@prisma/client';
 import { getEventSystem } from '../../events';
 import { hashPhoneNumber } from '../../utils/phoneHash';
 import { normalizePhoneNumber } from '../../utils/phoneUtils';
+import { sendVerificationCodeEmail } from '../email';
 import {
   AvailabilityScheduleResponse,
   AvailabilitySlotInput,
   BookableUser,
   CalendarEventSummary,
 } from '../../types/calendar';
+
+const EMAIL_CHANGE_CODE_TTL_MS = 10 * 60 * 1000;
+const EMAIL_CHANGE_MAX_ATTEMPTS = 5;
+
+const hashVerificationCode = (code: string): string =>
+  crypto.createHash('sha256').update(code).digest('hex');
+
+const generateVerificationCode = (): string => String(crypto.randomInt(100000, 1000000));
 
 const DEFAULT_WEEKDAY_SLOTS: AvailabilitySlotInput[] = [
   { weekday: 0, startMinutes: 0, endMinutes: 24 * 60 },
@@ -158,6 +168,123 @@ export class UserService {
         profileVisibility: data.profileVisibility,
         verified: true
       }
+    });
+  }
+
+  /**
+   * Whether `email` already belongs to a different user (case-insensitive).
+   */
+  async isEmailTaken(email: string, excludeUserId: string): Promise<boolean> {
+    const existing = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    return Boolean(existing && existing.id !== excludeUserId);
+  }
+
+  /**
+   * Whether `e164PhoneNumber` already belongs to a different user.
+   */
+  async isPhoneNumberTaken(e164PhoneNumber: string, excludeUserId: string): Promise<boolean> {
+    const hashed = hashPhoneNumber(e164PhoneNumber);
+    const existing = await prisma.user.findUnique({
+      where: { phoneNumber: hashed },
+      select: { id: true },
+    });
+    return Boolean(existing && existing.id !== excludeUserId);
+  }
+
+  /**
+   * Step 1 of the change-email flow: validate the candidate address, make sure it
+   * isn't already claimed, generate a 6-digit code, store its hash (never the raw
+   * code), and email it. Calling this again (e.g. "Resend") simply replaces the
+   * previous pending code.
+   */
+  async startEmailChange(userId: string, newEmail: string): Promise<{ expiresIn: number }> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (user.email && user.email.toLowerCase() === newEmail.toLowerCase()) {
+      throw new Error('This is already your current email');
+    }
+
+    if (await this.isEmailTaken(newEmail, userId)) {
+      throw new Error('This email is already in use');
+    }
+
+    const code = generateVerificationCode();
+
+    await prisma.pendingEmailChange.upsert({
+      where: { userId },
+      update: {
+        newEmail,
+        codeHash: hashVerificationCode(code),
+        attempts: 0,
+        expiresAt: new Date(Date.now() + EMAIL_CHANGE_CODE_TTL_MS),
+      },
+      create: {
+        userId,
+        newEmail,
+        codeHash: hashVerificationCode(code),
+        expiresAt: new Date(Date.now() + EMAIL_CHANGE_CODE_TTL_MS),
+      },
+    });
+
+    await sendVerificationCodeEmail(newEmail, code);
+
+    return { expiresIn: EMAIL_CHANGE_CODE_TTL_MS / 1000 };
+  }
+
+  /**
+   * Step 2 of the change-email flow: verify the code against the pending request
+   * and, if it matches, commit the new email.
+   */
+  async confirmEmailChange(userId: string, code: string): Promise<User> {
+    const pending = await prisma.pendingEmailChange.findUnique({ where: { userId } });
+    if (!pending || pending.expiresAt < new Date()) {
+      throw new Error('Verification code expired. Please request a new one.');
+    }
+
+    if (pending.attempts >= EMAIL_CHANGE_MAX_ATTEMPTS) {
+      throw new Error('Too many attempts. Please request a new code.');
+    }
+
+    if (hashVerificationCode(code) !== pending.codeHash) {
+      await prisma.pendingEmailChange.update({
+        where: { userId },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new Error('Invalid verification code');
+    }
+
+    if (await this.isEmailTaken(pending.newEmail, userId)) {
+      await prisma.pendingEmailChange.delete({ where: { userId } });
+      throw new Error('This email is already in use');
+    }
+
+    const [updatedUser] = await prisma.$transaction([
+      prisma.user.update({ where: { id: userId }, data: { email: pending.newEmail } }),
+      prisma.pendingEmailChange.delete({ where: { userId } }),
+    ]);
+
+    return updatedUser;
+  }
+
+  /**
+   * Commit a phone-number change once the caller has already confirmed the code
+   * with Twilio Verify. Re-checks uniqueness at write time to close the race
+   * window between the "start" and "confirm" steps.
+   */
+  async applyPhoneNumberChange(userId: string, e164PhoneNumber: string): Promise<User> {
+    if (await this.isPhoneNumberTaken(e164PhoneNumber, userId)) {
+      throw new Error('This phone number is already in use');
+    }
+
+    return prisma.user.update({
+      where: { id: userId },
+      data: { phoneNumber: hashPhoneNumber(e164PhoneNumber) },
     });
   }
 
@@ -737,6 +864,13 @@ export class UserService {
     if (approved) {
       await this.validateMeetingSchedule(receiverId, request.startTime, request.endTime, requestId);
 
+      // Paid bookings hold an authorization on the payer's card until the host
+      // approves. Capture it now — before any Moments are created — so a
+      // declined/expired card blocks the approval instead of silently
+      // confirming an unpaid booking. No-ops for free bookings.
+      const { PaymentService } = await import('../payments/paymentService');
+      await new PaymentService().captureForApprovedRequest(requestId);
+
       // Get both users' information to use in moment notes
       const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
       const sender = await prisma.user.findUnique({ where: { id: request.senderId } });
@@ -816,6 +950,10 @@ export class UserService {
 
       return updatedRequest;
     } else {
+      // Release any payment hold on a paid booking — no-ops for free bookings.
+      const { PaymentService } = await import('../payments/paymentService');
+      await new PaymentService().cancelForRejectedRequest(requestId);
+
       // Just reject the request
       const updatedRequest = await prisma.momentRequest.update({
         where: { id: requestId },
@@ -997,6 +1135,14 @@ export class UserService {
     if (!request) {
       throw new Error('Moment request not found or you do not have permission to cancel it');
     }
+
+    // Release any payment hold before the request row (and its Payment, via
+    // cascade) is deleted below — otherwise we'd lose the PaymentIntent id and
+    // orphan a live authorization on Stripe's side. No-ops for free bookings
+    // and for already-captured payments (refunding a captured, approved paid
+    // booking on cancellation is a Phase 2 feature, not handled here).
+    const { PaymentService } = await import('../payments/paymentService');
+    await new PaymentService().cancelForRejectedRequest(requestId);
 
     // If the request was approved, delete the associated moments for both users
     if (request.status === 'approved') {

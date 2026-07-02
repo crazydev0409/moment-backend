@@ -3,6 +3,9 @@ import { CustomRequestHandler } from '../../types/express';
 import { UserService } from '../../services/users/userService';
 import prisma from '../../services/prisma';
 import { normalizePhoneNumber } from '../../utils/phoneUtils';
+import { validatePhoneNumber } from '../../utils/validation';
+import { hashPhoneNumber } from '../../utils/phoneHash';
+import { verifyPhoneNumber, checkVerification } from '../../services/twilio';
 // Old notification service removed - now using event system
 
 const userService = new UserService();
@@ -64,6 +67,18 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
       return res.status(400).json({ error: 'Invalid profile visibility. Must be public, contacts, or only_me' });
     }
 
+    // Email can only be *set* here (first-time, during onboarding). Changing an
+    // already-set email must go through the verified change-email flow so we don't
+    // let this generic endpoint silently reassign a verified address.
+    if (email !== undefined && email !== null) {
+      const currentUser = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+      if (currentUser?.email && currentUser.email.toLowerCase() !== String(email).trim().toLowerCase()) {
+        return res.status(400).json({
+          error: 'Use the verified change-email flow to update your email address',
+        });
+      }
+    }
+
     // Parse birthday if provided
     let parsedBirthday: Date | undefined;
     if (birthday) {
@@ -122,6 +137,143 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
   }
 };
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Step 1 of changing your email: validate + check availability, send a code.
+ */
+export const startEmailChange: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { newEmail } = req.body as { newEmail?: string };
+
+    if (!newEmail || !EMAIL_REGEX.test(newEmail)) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+
+    const result = await userService.startEmailChange(userId, newEmail.trim().toLowerCase());
+    return res.json({ message: 'Verification code sent', ...result });
+  } catch (error) {
+    console.error('Error starting email change:', error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Failed to start email change',
+    });
+  }
+};
+
+/**
+ * Step 2 of changing your email: verify the code and commit the new address.
+ */
+export const confirmEmailChange: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { code } = req.body as { code?: string };
+
+    if (!code) {
+      return res.status(400).json({ error: 'Verification code is required' });
+    }
+
+    const updatedUser = await userService.confirmEmailChange(userId, code);
+    return res.json({ message: 'Email updated successfully', email: updatedUser.email });
+  } catch (error) {
+    console.error('Error confirming email change:', error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Failed to confirm email change',
+    });
+  }
+};
+
+/**
+ * Step 1 of changing your phone number: validate, check availability, and send
+ * an SMS code via Twilio Verify to the *new* number.
+ */
+export const startPhoneChange: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { newPhoneNumber } = req.body as { newPhoneNumber?: string };
+
+    if (!newPhoneNumber) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    let normalized: string;
+    try {
+      normalized = normalizePhoneNumber(newPhoneNumber);
+    } catch {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    if (!validatePhoneNumber(normalized)) {
+      return res.status(400).json({
+        error: 'Invalid phone number format. Please use E.164 format (e.g., +1234567890)',
+      });
+    }
+
+    const currentUser = await prisma.user.findUnique({ where: { id: userId }, select: { phoneNumber: true } });
+    if (currentUser && currentUser.phoneNumber === hashPhoneNumber(normalized)) {
+      return res.status(400).json({ error: 'This is already your current phone number' });
+    }
+
+    if (await userService.isPhoneNumberTaken(normalized, userId)) {
+      return res.status(409).json({ error: 'This phone number is already in use' });
+    }
+
+    await verifyPhoneNumber(normalized);
+    return res.json({ message: 'OTP sent successfully', expiresIn: 600 });
+  } catch (twilioError: any) {
+    console.error('Error starting phone change:', twilioError);
+
+    if (twilioError.code === 60200) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    } else if (twilioError.code === 60203) {
+      return res.status(429).json({ error: 'Too many verification attempts. Please try again later.' });
+    } else if (twilioError.code === 60212) {
+      return res.status(400).json({ error: 'Phone number blocked' });
+    }
+    return res.status(400).json({
+      error: twilioError instanceof Error ? twilioError.message : 'Failed to start phone number change',
+    });
+  }
+};
+
+/**
+ * Step 2 of changing your phone number: verify the SMS code with Twilio and, if
+ * approved, commit the new number.
+ */
+export const confirmPhoneChange: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { newPhoneNumber, code } = req.body as { newPhoneNumber?: string; code?: string };
+
+    if (!newPhoneNumber || !code) {
+      return res.status(400).json({ error: 'Phone number and verification code are required' });
+    }
+
+    let normalized: string;
+    try {
+      normalized = normalizePhoneNumber(newPhoneNumber);
+    } catch {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    const verification = await checkVerification(normalized, code);
+    if (verification.status !== 'approved') {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    const updatedUser = await userService.applyPhoneNumberChange(userId, normalized);
+    return res.json({ message: 'Phone number updated successfully', phoneNumber: updatedUser.phoneNumber });
+  } catch (error: any) {
+    console.error('Error confirming phone change:', error);
+
+    if (error.code === 60202) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Failed to confirm phone number change',
+    });
+  }
+};
 
 /**
  * Get all contacts for the current user

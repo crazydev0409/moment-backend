@@ -2,13 +2,16 @@ import * as cron from 'node-cron';
 import { UserDeviceRepository } from '../repositories/UserDeviceRepository';
 import prisma from '../services/prisma';
 import { getEventSystem } from '../events';
+import { PaymentService } from '../services/payments/paymentService';
 
 export class MaintenanceScheduler {
   private deviceRepo: UserDeviceRepository;
+  private paymentService: PaymentService;
   private scheduledTasks: cron.ScheduledTask[] = [];
 
   constructor() {
     this.deviceRepo = new UserDeviceRepository();
+    this.paymentService = new PaymentService();
   }
 
   /**
@@ -57,6 +60,22 @@ export class MaintenanceScheduler {
         }
       }, {
         name: 'event-store-cleanup',
+        timezone: 'UTC'
+      })
+    );
+
+    // Release stale payment holds every 15 minutes (abandoned checkouts after
+    // ~1hr, and authorized-but-never-approved bookings approaching Stripe's
+    // ~7-day capture limit after ~6 days).
+    this.scheduledTasks.push(
+      cron.schedule('*/15 * * * *', async () => {
+        try {
+          await this.paymentService.expireStalePayments();
+        } catch (error) {
+          console.error('[MaintenanceScheduler] Stale payment expiry failed:', error);
+        }
+      }, {
+        name: 'stale-payment-expiry',
         timezone: 'UTC'
       })
     );

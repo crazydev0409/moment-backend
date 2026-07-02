@@ -6,6 +6,7 @@ import userRoutes from './userRoutes';
 import deviceRoutes from './deviceRoutes';
 import hookRoutes from './hookRoutes';
 import testRoutes from './testRoutes';
+import paymentRoutes from './paymentRoutes';
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use('/users', userRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/hooks', hookRoutes);
 router.use('/test', testRoutes);
+router.use('/payments', paymentRoutes);
 
 export default router;

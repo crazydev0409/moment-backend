@@ -20,6 +20,117 @@ router.get('/profile', asHandler(userController.getCurrentUser));
 router.put('/profile', asHandler(userController.updateProfile));
 router.delete('/account', asHandler(userController.deleteAccount));
 
+/**
+ * @swagger
+ * /api/users/change-email/start:
+ *   post:
+ *     summary: Request an email change — sends a verification code to the new address
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [newEmail]
+ *             properties:
+ *               newEmail:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Verification code sent
+ *       400:
+ *         description: Invalid email or already your current email
+ *       409:
+ *         description: Email already in use by another account
+ */
+router.post('/change-email/start', asHandler(userController.startEmailChange));
+
+/**
+ * @swagger
+ * /api/users/change-email/confirm:
+ *   post:
+ *     summary: Confirm an email change with the code sent to the new address
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [code]
+ *             properties:
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Email updated successfully
+ *       400:
+ *         description: Invalid or expired code
+ */
+router.post('/change-email/confirm', asHandler(userController.confirmEmailChange));
+
+/**
+ * @swagger
+ * /api/users/change-phone/start:
+ *   post:
+ *     summary: Request a phone number change — sends an SMS verification code to the new number
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [newPhoneNumber]
+ *             properties:
+ *               newPhoneNumber:
+ *                 type: string
+ *                 description: E.164 format, e.g. +12223334444
+ *     responses:
+ *       200:
+ *         description: OTP sent successfully
+ *       400:
+ *         description: Invalid phone number or already your current number
+ *       409:
+ *         description: Phone number already in use by another account
+ */
+router.post('/change-phone/start', asHandler(userController.startPhoneChange));
+
+/**
+ * @swagger
+ * /api/users/change-phone/confirm:
+ *   post:
+ *     summary: Confirm a phone number change with the SMS code sent to the new number
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [newPhoneNumber, code]
+ *             properties:
+ *               newPhoneNumber:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Phone number updated successfully
+ *       400:
+ *         description: Invalid or expired code
+ */
+router.post('/change-phone/confirm', asHandler(userController.confirmPhoneChange));
+
 // Contact routes
 router.get('/contacts', asHandler(userController.getContacts));
 router.post('/contacts/import', asHandler(userController.importContacts));
