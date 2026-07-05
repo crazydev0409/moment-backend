@@ -37,4 +37,5 @@ export interface CalendarEventSummary {
   locationLatitude?: number | null;
   locationLongitude?: number | null;
   compact: boolean;
+  allDay?: boolean;
 }

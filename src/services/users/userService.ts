@@ -568,6 +568,7 @@ export class UserService {
       locationLabel: isOwnerView ? event.sourceCalendarName : null,
       locationAddress: isOwnerView ? event.location : null,
       compact: true,
+      allDay: event.isAllDay,
     }));
 
     return [...internalEvents, ...mappedExternalEvents].sort((a, b) =>
