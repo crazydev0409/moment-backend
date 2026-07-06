@@ -106,25 +106,6 @@ export class UserDeviceRepository {
     });
   }
 
-  async getUnreadNotificationCount(userId: string): Promise<number> {
-    return await prisma.notification.count({
-      where: {
-        userId,
-        isRead: false
-      }
-    });
-  }
-
-  async getDeviceByDeviceId(deviceId: string): Promise<UserDevice | null> {
-    return await prisma.userDevice.findFirst({
-      where: {
-        deviceId,
-        isActive: true,
-        rememberMe: true
-      }
-    }) as UserDevice | null;
-  }
-
   async getUserByDeviceId(deviceId: string): Promise<any | null> {
     const device = await prisma.userDevice.findMany({
       where: {

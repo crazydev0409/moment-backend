@@ -283,9 +283,3 @@ export const logout: CustomRequestHandler = async (req, res) => {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
-
-// Error handler for auth routes
-export const errorHandler = (err: any, req: any, res: any, _next: any): void => {
-  console.error('Auth error:', err);
-  res.status(500).json({ error: 'Authentication error' });
-};

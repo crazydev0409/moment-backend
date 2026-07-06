@@ -21,20 +21,3 @@ export const hashPhoneNumber = (phoneNumber: string): string => {
 
     return hash.digest('hex');
 };
-
-/**
- * Verify if a phone number matches a hash
- * Useful for testing and validation
- * 
- * @param phoneNumber - The phone number to verify
- * @param hash - The hash to compare against
- * @returns True if the phone number matches the hash
- */
-export const verifyPhoneHash = (phoneNumber: string, hash: string): boolean => {
-    try {
-        const computedHash = hashPhoneNumber(phoneNumber);
-        return computedHash === hash;
-    } catch {
-        return false;
-    }
-};

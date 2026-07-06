@@ -290,72 +290,6 @@ export const getContacts: CustomRequestHandler = async (req, res) => {
   }
 };
 
-/**
- * Add a new contact
- */
-export const addContact: CustomRequestHandler = async (req, res) => {
-  try {
-    const userId = req.user!.id;
-    const { contactPhone, displayName } = req.body;
-
-    // Validate phone number
-    if (!contactPhone) {
-      return res.status(400).json({ error: 'Contact phone number is required' });
-    }
-
-    // Basic E.164 format validation using utility
-    try {
-      normalizePhoneNumber(contactPhone);
-    } catch (e) {
-      return res.status(400).json({
-        error: 'Invalid phone number format. Please provide a valid phone number.'
-      });
-    }
-
-    const contact = await userService.addContact(userId, contactPhone, displayName);
-
-    return res.json({
-      message: 'Contact added successfully',
-      contact
-    });
-  } catch (error) {
-    console.error('Error adding contact:', error);
-    return res.status(500).json({ error: 'Failed to add contact' });
-  }
-};
-
-/**
- * Update a contact
- */
-export const updateContact: CustomRequestHandler = async (req, res) => {
-  try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-    const { displayName } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'Contact ID is required' });
-    }
-
-    try {
-      const contact = await userService.updateContact(id, userId, { displayName });
-
-      return res.json({
-        message: 'Contact updated successfully',
-        contact
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('not found')) {
-        return res.status(404).json({ error: error.message });
-      }
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error updating contact:', error);
-    return res.status(500).json({ error: 'Failed to update contact' });
-  }
-};
-
 export const patchContact: CustomRequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
@@ -379,36 +313,6 @@ export const patchContact: CustomRequestHandler = async (req, res) => {
   } catch (error) {
     console.error('Error patching contact:', error);
     return res.status(500).json({ error: 'Failed to update contact' });
-  }
-};
-
-/**
- * Delete a contact
- */
-export const deleteContact: CustomRequestHandler = async (req, res) => {
-  try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-
-    if (!id) {
-      return res.status(400).json({ error: 'Contact ID is required' });
-    }
-
-    try {
-      await userService.deleteContact(id, userId);
-
-      return res.json({
-        message: 'Contact deleted successfully'
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('not found')) {
-        return res.status(404).json({ error: error.message });
-      }
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error deleting contact:', error);
-    return res.status(500).json({ error: 'Failed to delete contact' });
   }
 };
 

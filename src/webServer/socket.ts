@@ -101,16 +101,6 @@ export function initializeSocketIO(server: HTTPServer): SocketIOServer {
 }
 
 /**
- * Get Socket.IO instance
- */
-export function getSocketIO(): SocketIOServer {
-  if (!io) {
-    throw new Error('Socket.IO not initialized. Call initializeSocketIO() first.');
-  }
-  return io;
-}
-
-/**
  * Broadcast event to specific user(s)
  */
 export function broadcastToUser(userId: string, event: string, data: any): void {
@@ -135,19 +125,6 @@ export function broadcastToUser(userId: string, event: string, data: any): void 
  */
 export function broadcastToUsers(userIds: string[], event: string, data: any): void {
   userIds.forEach(userId => broadcastToUser(userId, event, data));
-}
-
-/**
- * Broadcast event to all connected clients
- */
-export function broadcastToAll(event: string, data: any): void {
-  if (!io) {
-    console.warn('[SocketIO] Cannot broadcast: Socket.IO not initialized');
-    return;
-  }
-
-  io.emit(event, data);
-  console.log(`[SocketIO] Broadcasted ${event} to all connected clients`);
 }
 
 /**
@@ -227,19 +204,5 @@ export function handleEventForWebSocket(event: BaseEvent): void {
   });
 
   console.log(`[SocketIO] ✅ Completed broadcasting ${socketEvent} event`);
-}
-
-/**
- * Get connected user count
- */
-export function getConnectedUserCount(): number {
-  return userSocketMap.size;
-}
-
-/**
- * Check if user is connected
- */
-export function isUserConnected(userId: string): boolean {
-  return userSocketMap.has(userId) && userSocketMap.get(userId)!.size > 0;
 }
 

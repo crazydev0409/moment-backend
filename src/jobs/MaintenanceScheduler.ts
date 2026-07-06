@@ -205,14 +205,4 @@ export class MaintenanceScheduler {
 
     console.log(`[EventStoreCleanup] Deleted ${result.count} old events`);
   }
-
-  /**
-   * Get status of all scheduled jobs
-   */
-  getJobStatus(): { name: string; running: boolean }[] {
-    return this.scheduledTasks.map((task, index) => ({
-      name: `maintenance-job-${index}`,
-      running: (task as any).running || false
-    }));
-  }
 }
