@@ -19,13 +19,16 @@ export class ExpoNotificationHandler {
 
   // Event handler for all notification-worthy events
   handleEvent: EventHandler = async (event: BaseEvent) => {
-    const notification = this.mapEventToNotification(event);
-    if (!notification) return;
+    const targetUserIds = this.extractTargetUserIds(event);
+    if (targetUserIds.length === 0) return;
 
-    const targetUserId = this.extractTargetUserId(event);
-    if (!targetUserId) return;
-
-    await this.sendNotificationToUser(targetUserId, notification);
+    await Promise.all(
+      targetUserIds.map(async (userId) => {
+        const notification = this.mapEventToNotification(event, userId);
+        if (!notification) return;
+        await this.sendNotificationToUser(userId, notification);
+      })
+    );
   };
 
   async sendNotificationToUser(userId: string, notification: PushNotification): Promise<void> {
@@ -69,7 +72,7 @@ export class ExpoNotificationHandler {
     }
   }
 
-  private mapEventToNotification(event: BaseEvent): PushNotification | null {
+  private mapEventToNotification(event: BaseEvent, targetUserId: string): PushNotification | null {
     switch (event.type) {
       case EventType.MOMENT_REQUEST_CREATED:
         return {
@@ -91,10 +94,19 @@ export class ExpoNotificationHandler {
           }
         };
 
-      case EventType.MOMENT_REQUEST_APPROVED:
+      case EventType.MOMENT_REQUEST_APPROVED: {
+        // Sent to both parties now (see extractTargetUserIds) — the sender
+        // always needs this, and the receiver does too whenever they didn't
+        // take the approving action themselves (an auto-confirmed request:
+        // the sender's own send triggered the approval, so this push is the
+        // receiver's only signal a new confirmed meeting just landed).
+        // Copy is written from whichever side is actually reading it.
+        const isReceiver = targetUserId === event.payload.receiverId;
         return {
-          title: 'Moment Request Approved',
-          body: `${event.payload.receiverName} approved your moment request`,
+          title: isReceiver ? 'Meeting Confirmed' : 'Moment Request Approved',
+          body: isReceiver
+            ? `Your meeting "${event.payload.title || 'meeting'}" is confirmed`
+            : `${event.payload.receiverName} approved your moment request`,
           data: {
             eventType: event.type,
             momentRequestId: event.payload.momentRequestId,
@@ -103,11 +115,15 @@ export class ExpoNotificationHandler {
             endTime: event.payload.endTime
           }
         };
+      }
 
-      case EventType.MOMENT_REQUEST_REJECTED:
+      case EventType.MOMENT_REQUEST_REJECTED: {
+        const isReceiver = targetUserId === event.payload.receiverId;
         return {
-          title: 'Moment Request Declined',
-          body: `Your moment request was declined`,
+          title: isReceiver ? 'Meeting Declined' : 'Moment Request Declined',
+          body: isReceiver
+            ? `You declined "${event.payload.title || 'the meeting'}"`
+            : `Your moment request was declined`,
           data: {
             eventType: event.type,
             momentRequestId: event.payload.momentRequestId,
@@ -115,6 +131,7 @@ export class ExpoNotificationHandler {
             endTime: event.payload.endTime
           }
         };
+      }
 
       case EventType.MOMENT_REQUEST_CANCELED:
         return {
@@ -183,25 +200,32 @@ export class ExpoNotificationHandler {
     }
   }
 
-  private extractTargetUserId(event: BaseEvent): string | null {
-    // Extract the user who should receive the notification
+  private extractTargetUserIds(event: BaseEvent): string[] {
+    // Extract the user(s) who should receive the notification
     switch (event.type) {
       case EventType.MOMENT_REQUEST_CREATED:
-        return event.payload.receiverId;
+        // Only the receiver — the sender doesn't need a push about their
+        // own action of sending the request.
+        return [event.payload.receiverId].filter((id): id is string => !!id);
       case EventType.MOMENT_REQUEST_APPROVED:
       case EventType.MOMENT_REQUEST_REJECTED:
-        return event.payload.senderId;
+        // Both parties — same reasoning as the socket routing in socket.ts:
+        // the sender always needs this, and the receiver does too whenever
+        // the status changed without them directly acting (auto-confirm).
+        return [event.payload.senderId, event.payload.receiverId].filter((id): id is string => !!id);
       case EventType.MOMENT_REQUEST_CANCELED:
-        return event.payload.notifyUserId;
+        // Already computed as "whichever party didn't cancel" by the
+        // caller (see cancelMomentRequest) — correctly one-directional.
+        return [event.payload.notifyUserId].filter((id): id is string => !!id);
       case EventType.CONTACT_REGISTERED:
-        return event.payload.contactOwnerId;
+        return [event.payload.contactOwnerId].filter((id): id is string => !!id);
       case EventType.MOMENT_REMINDER_DUE:
-        return event.payload.userId;
+        return [event.payload.userId].filter((id): id is string => !!id);
       case EventType.MOMENT_UPDATED:
       case EventType.MOMENT_DELETED:
-        return event.payload.otherUserId || event.metadata.userId || null;
+        return [event.payload.otherUserId || event.metadata.userId].filter((id): id is string => !!id);
       default:
-        return event.metadata.userId || null;
+        return [event.metadata.userId].filter((id): id is string => !!id);
     }
   }
 }

@@ -27,34 +27,38 @@ export class DatabaseEventHandler {
 
   // Handler for storing user notifications in the notification table
   handleNotificationEvent: EventHandler = async (event: BaseEvent) => {
-    const notification = this.mapEventToNotificationRecord(event);
-    if (!notification) return;
+    const targetUserIds = this.extractTargetUserIds(event);
+    if (targetUserIds.length === 0) return;
 
-    const targetUserId = this.extractTargetUserId(event);
-    if (!targetUserId) return;
+    await Promise.all(
+      targetUserIds.map(async (targetUserId) => {
+        const notification = this.mapEventToNotificationRecord(event, targetUserId);
+        if (!notification) return;
 
-    try {
-      await prisma.notification.create({
-        data: {
-          id: uuidv4(),
-          userId: targetUserId,
-          type: event.type,
-          title: notification.title,
-          body: notification.body,
-          data: notification.data,
-          isRead: false,
-          isDelivered: true,
-          createdAt: event.timestamp,
-          updatedAt: event.timestamp,
-          deliveredAt: new Date()
+        try {
+          await prisma.notification.create({
+            data: {
+              id: uuidv4(),
+              userId: targetUserId,
+              type: event.type,
+              title: notification.title,
+              body: notification.body,
+              data: notification.data,
+              isRead: false,
+              isDelivered: true,
+              createdAt: event.timestamp,
+              updatedAt: event.timestamp,
+              deliveredAt: new Date()
+            }
+          });
+        } catch (error) {
+          console.error('Failed to store notification in database:', error);
         }
-      });
-    } catch (error) {
-      console.error('Failed to store notification in database:', error);
-    }
+      })
+    );
   };
 
-  private mapEventToNotificationRecord(event: BaseEvent): { title: string; body: string; data: any } | null {
+  private mapEventToNotificationRecord(event: BaseEvent, targetUserId: string): { title: string; body: string; data: any } | null {
     switch (event.type) {
       case 'moment.request.created':
         return {
@@ -67,24 +71,35 @@ export class DatabaseEventHandler {
           }
         };
 
-      case 'moment.request.approved':
+      case 'moment.request.approved': {
+        // Sent to both parties now — see extractTargetUserIds. Copy is
+        // written from whichever side is actually reading it, same as
+        // ExpoNotificationHandler's push copy for this event.
+        const isReceiver = targetUserId === event.payload.receiverId;
         return {
-          title: 'Moment Request Approved',
-          body: `Your moment request was approved`,
+          title: isReceiver ? 'Meeting Confirmed' : 'Moment Request Approved',
+          body: isReceiver
+            ? `Your meeting "${event.payload.title || 'meeting'}" is confirmed`
+            : `Your moment request was approved`,
           data: {
             momentRequestId: event.payload.momentRequestId,
             momentId: event.payload.momentId
           }
         };
+      }
 
-      case 'moment.request.rejected':
+      case 'moment.request.rejected': {
+        const isReceiver = targetUserId === event.payload.receiverId;
         return {
-          title: 'Moment Request Declined',
-          body: `Your moment request was declined`,
+          title: isReceiver ? 'Meeting Declined' : 'Moment Request Declined',
+          body: isReceiver
+            ? `You declined "${event.payload.title || 'the meeting'}"`
+            : `Your moment request was declined`,
           data: {
             momentRequestId: event.payload.momentRequestId
           }
         };
+      }
 
       case 'moment.reminder.due':
         return {
@@ -133,22 +148,24 @@ export class DatabaseEventHandler {
     }
   }
 
-  private extractTargetUserId(event: BaseEvent): string | null {
+  private extractTargetUserIds(event: BaseEvent): string[] {
     switch (event.type) {
       case 'moment.request.created':
-        return event.payload.receiverId;
+        return [event.payload.receiverId].filter((id): id is string => !!id);
       case 'moment.request.approved':
       case 'moment.request.rejected':
-        return event.payload.senderId;
+        // Both parties — same reasoning as ExpoNotificationHandler and the
+        // socket routing in socket.ts.
+        return [event.payload.senderId, event.payload.receiverId].filter((id): id is string => !!id);
       case 'contact.registered':
-        return event.payload.contactOwnerId;
+        return [event.payload.contactOwnerId].filter((id): id is string => !!id);
       case 'moment.reminder.due':
-        return event.payload.userId;
+        return [event.payload.userId].filter((id): id is string => !!id);
       case 'moment.updated':
       case 'moment.deleted':
-        return event.payload.otherUserId || event.metadata.userId || null;
+        return [event.payload.otherUserId || event.metadata.userId].filter((id): id is string => !!id);
       default:
-        return event.metadata.userId || null;
+        return [event.metadata.userId].filter((id): id is string => !!id);
     }
   }
 }

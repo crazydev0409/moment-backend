@@ -162,10 +162,16 @@ export function handleEventForWebSocket(event: BaseEvent): void {
 
     case EventType.MOMENT_REQUEST_APPROVED:
     case EventType.MOMENT_REQUEST_REJECTED:
-      // Meeting accepted/rejected → notify sender
+      // Meeting accepted/rejected → notify sender AND receiver. Sender
+      // always needs this (they weren't the one who acted). Receiver
+      // normally already has local state from their own action, so this is
+      // a no-op refresh for them — except for an auto-confirmed request,
+      // where the receiver never took any action and this is the *only*
+      // real-time signal they get that a new (already-approved) meeting
+      // just landed on their calendar.
       socketEvent = 'moment:response';
-      targetUserIds = [event.payload.senderId];
-      console.log(`[SocketIO] ✅ MOMENT_REQUEST_${event.type === EventType.MOMENT_REQUEST_APPROVED ? 'APPROVED' : 'REJECTED'} - notifying sender: ${event.payload.senderId}`);
+      targetUserIds = [event.payload.senderId, event.payload.receiverId];
+      console.log(`[SocketIO] ✅ MOMENT_REQUEST_${event.type === EventType.MOMENT_REQUEST_APPROVED ? 'APPROVED' : 'REJECTED'} - notifying sender: ${event.payload.senderId} and receiver: ${event.payload.receiverId}`);
       break;
 
     case EventType.MOMENT_DELETED:

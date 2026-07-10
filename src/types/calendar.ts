@@ -38,4 +38,5 @@ export interface CalendarEventSummary {
   locationLongitude?: number | null;
   compact: boolean;
   allDay?: boolean;
+  hookId?: string | null;
 }

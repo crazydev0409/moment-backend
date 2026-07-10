@@ -5,6 +5,10 @@ node_modules/
 dist/
 build/
 
+# Locally-hosted uploads (local-dev fallback only — production writes to
+# persistent /home storage, see src/utils/uploadsDir.ts)
+/uploads/
+
 # Environment variables
 .env
 .env.local

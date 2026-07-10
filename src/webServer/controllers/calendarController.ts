@@ -1,18 +1,12 @@
 import { CustomRequestHandler } from '../../types/express';
 import { CalendarIntegrationService, CalendarReauthRequiredError } from '../../services/calendar/calendarIntegrationService';
 import { UserService } from '../../services/users/userService';
+import { buildOAuthRedirectBaseUrl } from '../../utils/publicUrl';
 
 const calendarIntegrationService = new CalendarIntegrationService();
 const userService = new UserService();
 
-const buildBaseUrl = (req: Parameters<CustomRequestHandler>[0]) => {
-  if (process.env.OAUTH_REDIRECT_BASE_URL) {
-    return process.env.OAUTH_REDIRECT_BASE_URL.replace(/\/+$/, '');
-  }
-  const forwardedProto = req.headers['x-forwarded-proto'];
-  const protocol = typeof forwardedProto === 'string' ? forwardedProto : req.protocol;
-  return `${protocol}://${req.get('host')}`;
-};
+const buildBaseUrl = (req: Parameters<CustomRequestHandler>[0]) => buildOAuthRedirectBaseUrl(req);
 
 const parseRange = (query: Record<string, unknown>) => {
   if (typeof query.start === 'string' && typeof query.end === 'string') {

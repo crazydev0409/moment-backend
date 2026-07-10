@@ -8,9 +8,16 @@ import http from 'http';
 import { initializeEventSystem, shutdownEventSystem } from '../events';
 import { MaintenanceScheduler } from '../jobs/MaintenanceScheduler';
 import { initializeSocketIO } from './socket';
+import { UPLOADS_ROOT } from '../utils/uploadsDir';
 
 // Create Express app
 export const app = express();
+
+// Azure App Service terminates TLS at its edge and forwards the original
+// scheme/host via X-Forwarded-* headers — without trusting the proxy,
+// req.protocol always reports 'http' even in production, which would make
+// any absolute URL built from it (e.g. an uploaded avatar's URL) wrong.
+app.set('trust proxy', true);
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -29,6 +36,11 @@ app.use('/api/payments/webhook', express.raw({ type: 'application/json' }), paym
 // Middleware
 app.use(express.json());
 app.use(passport.initialize());
+
+// Uploaded files (avatars, etc.) — served from wherever uploadsDir.ts
+// resolved to (persistent Azure /home storage in production, ./uploads
+// locally).
+app.use('/uploads', express.static(UPLOADS_ROOT));
 
 // Swagger UI setup
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));

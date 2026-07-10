@@ -22,11 +22,13 @@ type AccessLevel = (typeof ACCESS_LEVELS)[number];
 const hookInclude = {
   participants: {
     include: {
-      user: { select: { id: true, name: true, avatar: true, accountType: true } }
+      // phoneNumber (stored hashed) lets the client match this person
+      // against a local device-contact photo, same as everywhere else.
+      user: { select: { id: true, name: true, avatar: true, accountType: true, phoneNumber: true } }
     }
   },
   availabilitySlots: { orderBy: { weekday: 'asc' } },
-  owner: { select: { id: true, name: true, avatar: true, accountType: true } }
+  owner: { select: { id: true, name: true, avatar: true, accountType: true, phoneNumber: true } }
 } satisfies Prisma.HookInclude;
 
 interface NormalizedSlot {

@@ -79,6 +79,7 @@ type MomentRequest = {
   createdAt: Date;
   updatedAt: Date;
   momentId: number | null;
+  hookId?: string | null;
   sender?: {
     id: string;
     name: string | null;
@@ -536,7 +537,12 @@ export class UserService {
       description: isOwnerView ? request.notes || request.description || null : null,
       startTime: request.startTime.toISOString(),
       endTime: request.endTime.toISOString(),
-      status: isOwnerView ? request.status : undefined,
+      // Unlike title/description/location, status isn't sensitive on its
+      // own (it's the free/busy-style signal a booking-time picker needs
+      // to tell "confirmed" from "just requested, not yet accepted" —
+      // matching validateMeetingSchedule's own approved-only conflict
+      // rule) so it's exposed regardless of viewer, not owner-gated.
+      status: request.status,
       meetingType: isOwnerView ? request.meetingType : undefined,
       locationType: isOwnerView ? request.locationType : undefined,
       locationLabel: isOwnerView ? request.locationLabel : null,
@@ -544,6 +550,11 @@ export class UserService {
       locationLatitude: isOwnerView ? request.locationLatitude : null,
       locationLongitude: isOwnerView ? request.locationLongitude : null,
       compact: false,
+      // Also exposed regardless of viewer, for the same reason as status —
+      // a booking picker needs to know an existing busy block belongs to
+      // the specific hook being booked through, to correctly apply that
+      // hook's capacity instead of treating it as an unrelated conflict.
+      hookId: request.hookId,
     }));
 
     const mappedExternalEvents: CalendarEventSummary[] = externalEvents.map((event) => ({
@@ -566,28 +577,66 @@ export class UserService {
     );
   }
 
+  /**
+   * Check whether `userId` is free for [startTime, endTime).
+   *
+   * Only `approved` requests count as a hard conflict — a `pending` request
+   * is just an ask, not a commitment, so multiple people can hold pending
+   * requests on the same popular slot (this matters most for Hooks, where
+   * one published window is naturally sent to/requested by many contacts)
+   * without blocking each other. The receiver picks who to approve, and
+   * approval re-validates via this same function, so a slot can't end up
+   * double-booked.
+   *
+   * When `hookId` is given and that hook has a `capacity` > 1 (a class,
+   * office hours, etc. meant to hold multiple simultaneous bookings), an
+   * approved request tied to *that same hook* only counts against its own
+   * capacity instead of blocking outright — so the 2nd..Nth approval for a
+   * multi-seat hook succeeds up to its declared capacity. An approved
+   * request that overlaps but belongs to something else entirely (a
+   * genuinely unrelated commitment at that time) still blocks, regardless
+   * of capacity — capacity only governs concurrent bookings of the same
+   * hook, not general availability.
+   */
   async validateMeetingSchedule(
     userId: string,
     startTime: Date,
     endTime: Date,
-    excludeRequestId?: string,
+    options?: { excludeRequestId?: string; hookId?: string | null },
   ): Promise<void> {
-    const conflicts = await prisma.momentRequest.findFirst({
+    const excludeRequestId = options?.excludeRequestId;
+    const hookId = options?.hookId;
+
+    let capacity: number | null = null;
+    if (hookId) {
+      const hook = await prisma.hook.findUnique({ where: { id: hookId }, select: { capacity: true } });
+      capacity = hook?.capacity ?? null;
+    }
+
+    const overlapping = await prisma.momentRequest.findMany({
       where: {
         id: excludeRequestId ? { not: excludeRequestId } : undefined,
         OR: [
           { senderId: userId },
           { receiverId: userId },
         ],
-        status: {
-          in: ['pending', 'approved'],
-        },
+        status: 'approved',
         startTime: { lt: endTime },
         endTime: { gt: startTime },
       },
+      select: { hookId: true },
     });
 
-    if (conflicts) {
+    if (hookId && capacity && capacity > 1) {
+      const sameHookBookings = overlapping.filter((r) => r.hookId === hookId).length;
+      const unrelatedConflict = overlapping.some((r) => r.hookId !== hookId);
+      if (unrelatedConflict) {
+        throw new Error('Selected time conflicts with an existing Catch meeting');
+      }
+      if (sameHookBookings >= capacity) {
+        throw new Error('This time slot is fully booked');
+      }
+    } else if (overlapping.length > 0) {
       throw new Error('Selected time conflicts with an existing Catch meeting');
     }
 
@@ -721,7 +770,30 @@ export class UserService {
       throw new Error('Start time must be before end time');
     }
 
-    await this.validateMeetingSchedule(receiverId, data.startTime, data.endTime);
+    // A multi-seat hook's capacity (a class, office hours, etc.) is meant to
+    // relax the conflict check only for whichever party actually *owns* it
+    // — letting them hold several concurrent approved bookings up to that
+    // limit — never for the other party, who can only attend once
+    // regardless. Two different screens send a hookId here with the owner
+    // on opposite sides (SendCatchScreen only ever offers the sender's own
+    // hooks; booking into a contact's published hook from their profile has
+    // the receiver as owner instead), so this looks the real owner up
+    // rather than assuming either direction.
+    const hookOwnerId = data.hookId
+      ? (await prisma.hook.findUnique({ where: { id: data.hookId }, select: { ownerId: true } }))?.ownerId ?? null
+      : null;
+    await this.validateMeetingSchedule(
+      senderId,
+      data.startTime,
+      data.endTime,
+      hookOwnerId === senderId ? { hookId: data.hookId } : undefined
+    );
+    await this.validateMeetingSchedule(
+      receiverId,
+      data.startTime,
+      data.endTime,
+      hookOwnerId === receiverId ? { hookId: data.hookId } : undefined
+    );
 
     const request = await prisma.momentRequest.create({
       data: {
@@ -741,6 +813,26 @@ export class UserService {
         status: 'pending'
       }
     });
+
+    // If the receiver has marked this sender as an auto-confirm contact,
+    // skip the pending review step entirely — approve it immediately, the
+    // same as if the receiver had tapped Confirm the instant it arrived.
+    // Best-effort: if this fails for any reason (a real conflict slipped in
+    // between the check above and now, a payment issue, etc.) the request
+    // simply falls back to normal pending review below rather than failing
+    // the whole booking attempt.
+    const autoConfirmContact = await prisma.contact.findFirst({
+      where: { ownerId: receiverId, contactUserId: senderId, autoConfirm: true },
+      select: { id: true }
+    });
+
+    if (autoConfirmContact) {
+      try {
+        return await this.approveMomentRequest(request);
+      } catch (error) {
+        console.error('Auto-confirm failed, falling back to pending review:', error);
+      }
+    }
 
     // Publish moment request created event
     try {
@@ -833,6 +925,118 @@ export class UserService {
   }
 
   /**
+   * Approve a pending request: re-validate both schedules, capture payment,
+   * create the Moment for both users, flip status to approved, and notify
+   * the sender. Shared by respondToMomentRequest (an explicit "Confirm"
+   * tap) and createMomentRequest (auto-confirm for a trusted contact) so
+   * the two paths can never drift apart.
+   */
+  private async approveMomentRequest(request: MomentRequest): Promise<MomentRequest> {
+    const { id: requestId, receiverId } = request;
+
+    // Same "whoever actually owns the hook" logic as createMomentRequest —
+    // capacity only relaxes the conflict check for that party, on
+    // whichever side of sender/receiver they land for this request.
+    const hookOwnerId = request.hookId
+      ? (await prisma.hook.findUnique({ where: { id: request.hookId }, select: { ownerId: true } }))?.ownerId ?? null
+      : null;
+    await this.validateMeetingSchedule(request.senderId, request.startTime, request.endTime, {
+      excludeRequestId: requestId,
+      hookId: hookOwnerId === request.senderId ? request.hookId : undefined,
+    });
+    await this.validateMeetingSchedule(receiverId, request.startTime, request.endTime, {
+      excludeRequestId: requestId,
+      hookId: hookOwnerId === receiverId ? request.hookId : undefined,
+    });
+
+    // Paid bookings hold an authorization on the payer's card until the host
+    // approves. Capture it now — before any Moments are created — so a
+    // declined/expired card blocks the approval instead of silently
+    // confirming an unpaid booking. No-ops for free bookings.
+    const { PaymentService } = await import('../payments/paymentService');
+    await new PaymentService().captureForApprovedRequest(requestId);
+
+    // Get both users' information to use in moment notes
+    const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
+    const sender = await prisma.user.findUnique({ where: { id: request.senderId } });
+
+    // Create moment for the receiver
+    const receiverMoment = await prisma.moment.create({
+      data: {
+        userId: receiverId,
+        startTime: request.startTime,
+        endTime: request.endTime,
+        availability: 'private',
+        notes: `Moment with ${sender?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
+        allDay: false,
+        visibleTo: [request.senderId] // Make visible to sender
+      }
+    });
+
+    // Create moment for the sender
+    await prisma.moment.create({
+      data: {
+        userId: request.senderId,
+        startTime: request.startTime,
+        endTime: request.endTime,
+        availability: 'private',
+        notes: `Moment with ${receiver?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
+        allDay: false,
+        visibleTo: [receiverId] // Make visible to receiver
+      }
+    });
+
+    // Update the request with the new status and link to the receiver's moment
+    const updatedRequest = await prisma.momentRequest.update({
+      where: { id: requestId },
+      data: {
+        status: 'approved',
+        momentId: receiverMoment.id
+      },
+      include: {
+        receiver: {
+          select: {
+            id: true,
+            name: true,
+            phoneNumber: true,
+            avatar: true
+          }
+        },
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            phoneNumber: true,
+            avatar: true
+          }
+        }
+      }
+    });
+
+    // Publish moment request approved event to notify the sender
+    try {
+      const { eventPublisher } = getEventSystem();
+      await eventPublisher.publishMomentRequestApproved(
+        requestId,
+        request.senderId,
+        receiverId,
+        receiverMoment.id,
+        {
+          receiverName: receiver?.name || receiver?.phoneNumber || 'User',
+          title: request.title || request.notes || 'Meeting',
+          startTime: request.startTime,
+          endTime: request.endTime
+        }
+      );
+    } catch (error) {
+      console.error('Failed to publish moment request approved event:', error);
+      // Don't fail the request if event publishing fails
+    }
+
+    return updatedRequest;
+  }
+
+  /**
    * Respond to a moment request (approve or reject)
    */
   async respondToMomentRequest(requestId: string, receiverId: string, approved: boolean): Promise<MomentRequest> {
@@ -851,95 +1055,8 @@ export class UserService {
       throw new Error('This request has already been processed');
     }
 
-    // If approved, create moments for both users
     if (approved) {
-      await this.validateMeetingSchedule(receiverId, request.startTime, request.endTime, requestId);
-
-      // Paid bookings hold an authorization on the payer's card until the host
-      // approves. Capture it now — before any Moments are created — so a
-      // declined/expired card blocks the approval instead of silently
-      // confirming an unpaid booking. No-ops for free bookings.
-      const { PaymentService } = await import('../payments/paymentService');
-      await new PaymentService().captureForApprovedRequest(requestId);
-
-      // Get both users' information to use in moment notes
-      const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
-      const sender = await prisma.user.findUnique({ where: { id: request.senderId } });
-
-      // Create moment for the receiver
-      const receiverMoment = await prisma.moment.create({
-        data: {
-          userId: receiverId,
-          startTime: request.startTime,
-          endTime: request.endTime,
-          availability: 'private',
-          notes: `Moment with ${sender?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
-          allDay: false,
-          visibleTo: [request.senderId] // Make visible to sender
-        }
-      });
-
-      // Create moment for the sender
-      await prisma.moment.create({
-        data: {
-          userId: request.senderId,
-          startTime: request.startTime,
-          endTime: request.endTime,
-          availability: 'private',
-          notes: `Moment with ${receiver?.name || 'a contact'}: ${request.notes || 'Meeting'}`,
-          allDay: false,
-          visibleTo: [receiverId] // Make visible to receiver
-        }
-      });
-
-      // Update the request with the new status and link to the receiver's moment
-      const updatedRequest = await prisma.momentRequest.update({
-        where: { id: requestId },
-        data: {
-          status: 'approved',
-          momentId: receiverMoment.id
-        },
-        include: {
-          receiver: {
-            select: {
-              id: true,
-              name: true,
-              phoneNumber: true,
-              avatar: true
-            }
-          },
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              phoneNumber: true,
-              avatar: true
-            }
-          }
-        }
-      });
-
-      // Publish moment request approved event to notify the sender
-      try {
-        const { eventPublisher } = getEventSystem();
-        await eventPublisher.publishMomentRequestApproved(
-          requestId,
-          request.senderId,
-          receiverId,
-          receiverMoment.id,
-          {
-            receiverName: receiver?.name || receiver?.phoneNumber || 'User',
-            title: request.title || request.notes || 'Meeting',
-            startTime: request.startTime,
-            endTime: request.endTime
-          }
-        );
-      } catch (error) {
-        console.error('Failed to publish moment request approved event:', error);
-        // Don't fail the request if event publishing fails
-      }
-
-      return updatedRequest;
+      return this.approveMomentRequest(request);
     } else {
       // Release any payment hold on a paid booking — no-ops for free bookings.
       const { PaymentService } = await import('../payments/paymentService');
@@ -1211,7 +1328,8 @@ export class UserService {
           select: {
             id: true,
             name: true,
-            avatar: true
+            avatar: true,
+            phoneNumber: true
           }
         }
       },
@@ -1577,6 +1695,24 @@ export class UserService {
             }
           }
         });
+
+        // Same auto-confirm check as the single-recipient path — this
+        // particular receiver's own trust setting for the sender, evaluated
+        // independently per recipient (so in a batch of invitees, some can
+        // auto-confirm while others still need to review manually).
+        const autoConfirmContact = await prisma.contact.findFirst({
+          where: { ownerId: receiverId, contactUserId: senderId, autoConfirm: true },
+          select: { id: true }
+        });
+
+        if (autoConfirmContact) {
+          try {
+            successful.push(await this.approveMomentRequest(request));
+            continue;
+          } catch (error) {
+            console.error('Auto-confirm failed, falling back to pending review:', error);
+          }
+        }
 
         // Publish moment request created event
         try {

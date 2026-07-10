@@ -7,6 +7,12 @@ import { validatePhoneNumber } from '../../utils/validation';
 import { hashPhoneNumber } from '../../utils/phoneHash';
 import { verifyPhoneNumber, checkVerification } from '../../services/twilio';
 // Old notification service removed - now using event system
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import multer from 'multer';
+import { avatarUploadDir } from '../../utils/uploadsDir';
+import { buildInstanceBaseUrl } from '../../utils/publicUrl';
 
 const userService = new UserService();
 
@@ -134,6 +140,82 @@ export const updateProfile: CustomRequestHandler = async (req, res) => {
   } catch (error) {
     console.error('Error updating profile:', error);
     return res.status(500).json({ error: 'Failed to update profile' });
+  }
+};
+
+// Base64 data URIs render unreliably as <Image> sources in React Native
+// (especially on Android), unlike a plain hosted URL — so profile photos
+// are uploaded as real files and served back with a normal HTTP(S) URL
+// instead of being embedded inline.
+const ALLOWED_AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+export const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_AVATAR_MIME_TYPES.has(file.mimetype)) {
+      cb(new Error('Avatar must be a JPEG, PNG, or WebP image'));
+      return;
+    }
+    cb(null, true);
+  },
+}).single('avatar');
+
+/**
+ * Upload/replace the current user's profile avatar. Saves the file to disk
+ * and stores a normal HTTP(S) URL on User.avatar, pointing back at
+ * whichever instance actually received the upload (local dev vs
+ * production) — see src/utils/publicUrl.ts for why this deliberately does
+ * NOT reuse the OAuth redirect base URL, unlike the calendar callbacks.
+ */
+export const uploadAvatar: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) {
+      return res.status(400).json({ error: 'No avatar file provided' });
+    }
+
+    const ext = file.mimetype === 'image/png' ? 'png' : file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+    const filename = `${userId}-${crypto.randomBytes(8).toString('hex')}.${ext}`;
+    const dir = avatarUploadDir();
+    fs.writeFileSync(path.join(dir, filename), file.buffer);
+
+    // Best-effort cleanup of the previous locally-hosted avatar file (skip
+    // anything that isn't one of ours, e.g. an OAuth-provided photo URL).
+    const previous = await prisma.user.findUnique({ where: { id: userId }, select: { avatar: true } });
+    const previousAvatar = (previous as any)?.avatar as string | undefined;
+    if (previousAvatar?.includes('/uploads/avatars/')) {
+      const previousFilename = previousAvatar.split('/uploads/avatars/')[1];
+      if (previousFilename) {
+        try { fs.unlinkSync(path.join(dir, previousFilename)); } catch {}
+      }
+    }
+
+    const avatarUrl = `${buildInstanceBaseUrl(req)}/uploads/avatars/${filename}`;
+
+    const updatedUser = await userService.updateUserProfile(userId, { avatar: avatarUrl });
+
+    return res.json({
+      message: 'Avatar updated successfully',
+      user: {
+        id: updatedUser.id,
+        phoneNumber: updatedUser.phoneNumber,
+        name: (updatedUser as any).name,
+        avatar: (updatedUser as any).avatar,
+        timezone: (updatedUser as any).timezone || 'UTC',
+        bio: (updatedUser as any).bio,
+        email: (updatedUser as any).email,
+        birthday: (updatedUser as any).birthday,
+        meetingTypes: (updatedUser as any).meetingTypes || [],
+        verified: updatedUser.verified,
+        profileVisibility: (updatedUser as any).profileVisibility || 'public',
+        createdAt: updatedUser.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error uploading avatar:', error);
+    return res.status(500).json({ error: 'Failed to upload avatar' });
   }
 };
 

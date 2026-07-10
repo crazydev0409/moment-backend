@@ -18,6 +18,7 @@ router.use(authenticate);
 // User profile routes
 router.get('/profile', asHandler(userController.getCurrentUser));
 router.put('/profile', asHandler(userController.updateProfile));
+router.post('/profile/avatar', userController.avatarUpload, asHandler(userController.uploadAvatar));
 router.delete('/account', asHandler(userController.deleteAccount));
 
 router.post('/change-email/start', asHandler(userController.startEmailChange));
