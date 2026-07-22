@@ -398,6 +398,25 @@ export const patchContact: CustomRequestHandler = async (req, res) => {
   }
 };
 
+export const deleteContact: CustomRequestHandler = async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+
+    if (!id) return res.status(400).json({ error: 'Contact ID is required' });
+
+    const existing = await prisma.contact.findFirst({ where: { id, ownerId: userId } });
+    if (!existing) return res.status(404).json({ error: 'Contact not found' });
+
+    await prisma.contact.delete({ where: { id } });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting contact:', error);
+    return res.status(500).json({ error: 'Failed to delete contact' });
+  }
+};
+
 /**
  * Import contacts from mobile device address book
  */
